@@ -303,6 +303,7 @@ def mask(meanf, hyp, x=None, hi=None):
 
 
 def feval(fun, hyp=None, x=None, hi=None):
+  print __name__
   """
   Evaluates mean functions.
   """
@@ -310,10 +311,10 @@ def feval(fun, hyp=None, x=None, hi=None):
     fun = (fun,)
 
   f = fun[0]
-  if f.__module__ == 'sklearn.gpml.mean':
+  if f.__module__ == __name__:
     if len(fun) > 1 and (f == mask or f == pow or f == prod or f == scale or f == sum):
       return f(fun[1], hyp, x, hi)
     else:
       return f(hyp, x, hi)
   else:
-    raise AttributeError('Unknown function')
+    raise AttributeError('Unknown mean function')
