@@ -23,7 +23,7 @@ composite covariance functions::
 
 import numpy
 
-def zero(hyp, x=None, hi=None):
+def zero(hyp=None, x=None, hi=None):
   """
   Zero mean function. The mean function does not have any parameters.
   
@@ -36,7 +36,7 @@ def zero(hyp, x=None, hi=None):
   return numpy.zeros((numpy.size(x,0),1))
 
 
-def one(hyp, x=None, hi=None):
+def one(hyp=None, x=None, hi=None):
   """
   One mean function. The mean function does not have any parameters.
   
@@ -53,7 +53,7 @@ def one(hyp, x=None, hi=None):
     return numpy.zeros((numpy.size(x,0),1))
 
 
-def const(hyp, x=None, hi=None):
+def const(hyp=None, x=None, hi=None):
   """
   Constant mean function. The mean function is parameterized as::
   
@@ -81,7 +81,7 @@ def const(hyp, x=None, hi=None):
       return numpy.zeros((numpy.size(x,0),1))
 
 
-def linear(hyp, x=None, hi=None):
+def linear(hyp=None, x=None, hi=None):
   """
   Linear mean function. The mean function is parameterized as::
   
@@ -113,7 +113,7 @@ def linear(hyp, x=None, hi=None):
       return numpy.zeros((n,1))
 
 
-def scale(meanf, hyp, x=None, hi=None):
+def scale(meanf, hyp=None, x=None, hi=None):
   """
   Compose a mean function as a scaled version of another one::
   
@@ -142,7 +142,7 @@ def scale(meanf, hyp, x=None, hi=None):
       return a*feval(meanf,hyp[1:],x,hi-1)
 
 
-def pow(meanf, hyp, x=None, hi=None):
+def pow(meanf, hyp=None, x=None, hi=None):
   """
   Compose a mean function as the power of another mean function::
   
@@ -172,7 +172,7 @@ def pow(meanf, hyp, x=None, hi=None):
     return (d*numpy.power(feval(meanf, hyp, x), (d-1))) * feval(meanf, hyp, x, hi);
 
 
-def prod(meanf, hyp, x=None, hi=None):
+def prod(meanf, hyp=None, x=None, hi=None):
   """
   Compose a mean function as the product of other mean functions::
   
@@ -225,7 +225,7 @@ def prod(meanf, hyp, x=None, hi=None):
       return numpy.zeros((n,1))
 
 
-def sum(meanf, hyp, x=None, hi=None):
+def sum(meanf, hyp=None, x=None, hi=None):
   """
   Compose a mean function as the sum of other mean functions::
   
@@ -234,21 +234,31 @@ def sum(meanf, hyp, x=None, hi=None):
   This function doesn't actually compute very much on its own, it merely does
   some bookkeeping, and calls other mean function to do the actual work.
   """
+  if meanf is None:
+    raise AttributeError('Mean functions to be summed must be defined.')
+  else:
+    l = len(meanf)
+    if l == 0:
+      raise AttributeError('At least one mean function to be summed must be defined.')
+
+
+  # iterate over mean functions and collect number of hyperparameters
   j = []
   for i in range(len(meanf)):
     f = meanf[i]
     j.append(feval(f))
   
+  # if there is no data, return number of hyperparameters
   if x is None:
     t = j[0]
-    for i in range(1, len(meanf)):
+    for i in range(1, l):
       t = t + '+' + j[i]
     return t
 
   n, D = numpy.shape(x)
   
   # v vector indicates to which mean parameters belong
-  v = numpy.array([])
+  v = numpy.array([], dtype=numpy.dtype(numpy.int32))
   for i in range(len(meanf)):
     v = numpy.append(v, numpy.tile(i, (eval(j[i]),)))
 
@@ -265,13 +275,13 @@ def sum(meanf, hyp, x=None, hi=None):
     if hi < numpy.size(v):
       i = v[hi]
       hj = numpy.sum(v[0:hi]==i)
-      f = meanf[j]
+      f = meanf[i]
       return feval(f, hyp[v==i], x, hj)
     else:
       return numpy.zeros((n,1))
 
 
-def mask(meanf, hyp, x=None, hi=None):
+def mask(meanf, hyp=None, x=None, hi=None):
   """
   Apply a mean function to a subset of the dimensions only. The subset can
   either be specified by a 0/1 mask, by a boolean mask or by an index set.
@@ -303,7 +313,6 @@ def mask(meanf, hyp, x=None, hi=None):
 
 
 def feval(fun, hyp=None, x=None, hi=None):
-  print __name__
   """
   Evaluates mean functions.
   """
