@@ -1,3 +1,43 @@
+"""
+Covariance functions to be use by Gaussian process functions. There are two
+different kinds of covariance functions:: simple and composite::
+
+simple mean functions::
+
+  const      - covariance for constant functions
+  lin        - linear covariance function
+  linArd     - linear covariance function with ARD
+  linOne     - linear covariance function with bias
+  maternIso  - Matern covariance function with nu=1/2, 3/2 or 5/2
+  nnOne      - neural network covariance function
+  noise      - independent covariance function (i.e. white noise)
+  periodic   - smooth periodic covariance function (1d) with unit period
+  poly       - polynomial covariance function
+  ppIso      - piecewise polynomial covariance function (compact support)
+  rqArd      - rational quadratic covariance function with ARD
+  rqIso      - isotropic rational quadratic covariance function
+  seArd      - squared exponential covariance function with ARD
+  seIso      - isotropic squared exponential covariance function
+  seIsoU     - as above but without latent scale
+  
+composite covariance functions::
+
+  scale     - scaled version of a covariance function
+  prod      - products of covariance functions
+  sum       - sums of covariance functions
+  add       - additive covariance function
+  mask      - mask some dimensions of the data
+
+special purpose (wrapper) covariance functions::
+
+  fitc      - to be used in conjunction with inf.fitc for large scale
+              regression problems; any covariance function can be wrapped
+              by cov.fitc such that the FITC approximation is applicable
+"""
+# Author: Dejan Petelin <http://www.linkedin.com/in/dejanpetelin>
+# Python implementation of the GPML MATLAB Toolbox, version 3.2
+# License: see copyright
+
 import numpy
 import numpy.matlib
 
