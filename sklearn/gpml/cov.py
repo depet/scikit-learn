@@ -41,7 +41,9 @@ special purpose (wrapper) covariance functions::
 import numpy
 import numpy.matlib
 
+#from . import util
 import util
+
 
 def periodic(hyp=None, x=None, z=None, hi=None, dg=None):
   """
@@ -407,10 +409,10 @@ def sum(covf, hyp, x=None, z=None, hi=None, dg=None):
 
   if hi is None:
     K = 0
-    # compute mean by iteration over summand functions
+    # compute covariance by iteration over summand functions
     for i in range(l):
       f = covf[i]
-      # accumulate means
+      # accumulate covariances
       K = K + feval(f, hyp[v==i], x, z, None, dg)
   else:
     # derivative
@@ -464,10 +466,10 @@ def prod(covf, hyp=None, x=None, z=None, hi=None, dg=None):
 
   if hi is None:
     K = 1
-    # compute mean by iteration over summand functions
+    # compute covariance by iteration over summand functions
     for i in range(l):
       f = covf[i]
-      # accumulate means
+      # accumulate covariances
       K = K * feval(f, hyp[v==i], x, z, None, dg)
   else:
     # derivative
@@ -499,7 +501,70 @@ def mask(covf, hyp=None, x=None, z=None, hi=None):
   raise NotImplementedError()
 
 
-def feval(fun, hyp=None, x=None, z=None, hi=None, dg=None):
+
+
+def fitc(covf, xu, hyp=None, x=None, z=None, hi=None, dg=None, nargout=1):
+  """
+  Covariance function to be used together with the FITC approximation.
+  
+  The function allows for more than one output argument and does not respect the
+  interface of a proper covariance function. In fact, it wraps a proper
+  covariance function such that it can be used together with inf.fitc.
+  Instead of outputing the full covariance, it returns cross-covariances between
+  the inputs x, z and the inducing inputs xu as needed by inf.fitc.
+  """
+  if x is None:
+    return feval(covf)
+
+  if z is None:
+    z = z = numpy.array([[]])
+
+  if dg is None:
+    dg = False
+  
+  xeqz = numpy.size(z) == 0
+
+  if numpy.size(xu,1) != numpy.size(x,1):
+    raise AttributeError('Dimensionality of inducing inputs must match training inputs.')
+
+  if hi is None:
+    # covariances
+    if dg:
+      return feval(covf,hyp,x,dg=True)
+    else:
+      if xeqz:
+        K = feval(covf,hyp,x,dg=True)
+        r = K
+        if nargout >= 2:
+          Kuu = feval(covf,hyp,xu)
+          r = (K,Kuu)
+        if nargout >= 3:
+          Ku  = feval(covf,hyp,xu,x)
+          r = (K,Kuu,Ku)
+        return r
+      else:
+        return feval(covf,hyp,xu,z)
+  else:
+    # derivatives
+    if dg:
+      return feval(covf,hyp,x,hi=hi,dg=True)
+    else:
+      if xeqz:
+        K = feval(covf,hyp,x,hi=hi,dg=True)
+        r = K
+        if nargout >= 2:
+          Kuu = feval(covf,hyp,xu,hi=hi)
+          r = (K,Kuu)
+        if nargout >= 3:
+          Ku  = feval(covf,hyp,xu,x,hi=hi)
+          r = (K,Kuu,Ku)
+        return r
+      else:
+        return feval(covf,hyp,xu,z,hi)
+
+
+
+def feval(fun, hyp=None, x=None, z=None, hi=None, dg=None, nargout=None):
   """
   Evaluates covariance functions.
   """
@@ -510,7 +575,11 @@ def feval(fun, hyp=None, x=None, z=None, hi=None, dg=None):
   if f.__module__ == __name__:
     if len(fun) > 1 and (f == add or f == mask or f == prod or f == scale or f == sum):
       return f(fun[1], hyp, x, z, hi, dg)
-    #elif f == cov.fitc or f == cov.maternIso or f == cov.poly or f == cov.ppIso:
+    elif f == fitc:
+      if len(fun) < 3:
+        raise AttributeError('FITC covariance function must contain pseudo inputs.')
+      return f(fun[1], fun[2], hyp, x, z, hi, dg, nargout)
+    #f == cov.maternIso or f == cov.poly or f == cov.ppIso:
     #  ...
     else:
       return f(hyp, x, z, hi, dg)
