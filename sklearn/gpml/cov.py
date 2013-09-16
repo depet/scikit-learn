@@ -41,8 +41,7 @@ special purpose (wrapper) covariance functions::
 import numpy
 import numpy.matlib
 
-#from . import util
-import util
+from . import util
 
 
 def periodic(hyp=None, x=None, z=None, hi=None, dg=None):
