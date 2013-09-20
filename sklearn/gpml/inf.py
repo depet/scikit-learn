@@ -134,11 +134,10 @@ def ep(hyp, meanf, covf, likf, x, y, nargout=2):
     nlZ_old = nlZ
     sweep += 1
     # iterate EP updates (in random order) over examples
-    #for i in numpy.random.permutation(n):
-    for i in range(n):
+    for i in numpy.random.permutation(n):
       # first find the cavity distribution, params tau_ni and nu_ni
-      tau_ni = 1/Sigma[i,i] - ttau[i]
-      nu_ni = mu[i]/Sigma[i,i] + m[i]*tau_ni - tnu[i]
+      tau_ni = numpy.reshape(1/Sigma[i,i] - ttau[i],(-1,1))
+      nu_ni = numpy.reshape(mu[i]/Sigma[i,i] + m[i]*tau_ni - tnu[i],(-1,1))
 
       # compute the desired derivatives of the indivdual log partition function
       lZ, dlZ, d2lZ = lik.feval(likf, hyp['lik'], y[i], nu_ni/tau_ni, 1/tau_ni, inff, nargout=3)
@@ -170,7 +169,9 @@ def ep(hyp, meanf, covf, likf, x, y, nargout=2):
   post['alpha'] = alpha
   post['L'] = L
 
-  res = (post, nlZ)
+  res = post
+  if nargout > 1:
+    res = (post, nlZ)
 
   # do we want derivatives?
   if nargout > 2:
