@@ -322,7 +322,7 @@ def logistic(hyp, y=None, mu=None, s2=None, inf=None, hi=None, nargout=None):
         # contribution to the second derivative
         
         # empirically determined bound at val==0
-        val = numpy.abs(mu)-196/200*s2-4
+        val = numpy.abs(mu)-196./200.*s2-4.
         # interpolation weights
         lam = 1/(1+numpy.exp(-10*val))
         # apply the same to p(y|f) = 1 - p(-y|f)
