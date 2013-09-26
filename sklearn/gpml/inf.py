@@ -30,8 +30,8 @@ from . import lik
 from . import mean
 from . import util
 
-__last_ttau = numpy.array([[]])
-__last_tnu = numpy.array([[]])
+__ep_last_ttau = numpy.array([[]])
+__ep_last_tnu = numpy.array([[]])
 
 def exact(hyp, meanf, covf, likf, x, y, nargout=None):
   """
@@ -89,8 +89,8 @@ def ep(hyp, meanf, covf, likf, x, y, nargout=2):
   function. In the EP algorithm, the sites are updated in random order, 
   for better performance when cases are ordered according to the targets.
   """
-  global __last_ttau
-  global __last_tnu
+  global __ep_last_ttau
+  global __ep_last_tnu
 
   tol = 1e-4
   max_sweep = 10
@@ -109,15 +109,15 @@ def ep(hyp, meanf, covf, likf, x, y, nargout=2):
   
   # marginal likelihood for ttau = tnu = zeros((n,1))
   nlZ0 = float(-numpy.sum(lik.feval(likf, hyp['lik'], y, m, numpy.reshape(numpy.diag(K),(-1,1)), 'ep', nargout=1)))
-  if numpy.shape(__last_ttau) != (n, 1):
+  if numpy.shape(__ep_last_ttau) != (n, 1):
     ttau = numpy.zeros((n,1))
     tnu = numpy.zeros((n,1))
     Sigma = K.copy()
     mu = numpy.zeros((n,1))
     nlZ = nlZ0
   else:
-    ttau = __last_ttau.copy()
-    tnu = __last_tnu.copy()
+    ttau = __ep_last_ttau.copy()
+    tnu = __ep_last_tnu.copy()
     Sigma, mu, nlZ, L = __epComputeParams(K, y, ttau, tnu, likf, hyp, m, inff)
     # if zero is better, initialize with zero instead
     if nlZ > nlZ0:
@@ -158,8 +158,8 @@ def ep(hyp, meanf, covf, likf, x, y, nargout=2):
   if sweep == max_sweep:
     raise Error('Maximum number of sweeps reached in EP inference function.')
 
-  __last_ttau = ttau.copy()
-  __last_tnu = tnu.copy()
+  __ep_last_ttau = ttau.copy()
+  __ep_last_tnu = tnu.copy()
 
   # posterior parameters
   sW = numpy.sqrt(ttau)
@@ -315,5 +315,255 @@ def fitc(hyp, meanf, covf, likf, x, y, nargout=None):
       res = (post, nlZ, dnlZ)
 
   return res
+
+
+def mcmc(hyp, meanf, covf, likf, x, y, par=None, nargout=None):
+  """
+  Markov Chain Monte Carlo (MCMC) sampling from posterior and 
+  Annealed Importance Sampling (AIS) for marginal likelihood estimation.
+
+  The algorithms are not to be used as a black box, since the acceptance rate
+  of the samplers need to be carefully monitored. Also, there are no derivatives 
+  of the marginal likelihood available.
+
+  There are additional parameters:
+    - par['sampler']   switch between the samplers 'hmc' or 'ess'
+    - par['Nsample']   num of samples
+    - par['Nskip']     num of steps out of which one sample kept
+    - par['Nburnin']   num of burn in samples (corresponds to Nskip*Nburning steps)
+    - par['Nais']      num of AIS runs to remove finite temperature bias
+  Default values are sampler=hmc, Nsample=200, Nskip=40, Nburnin=10, Nais=3.
+
+  The Hybrid Monte Carlo Sampler (HMC) is implemented as described in the
+  technical report: Probabilistic Inference using MCMC Methods by Radford Neal,
+  CRG-TR-93-1, 1993.
+
+      Instead of sampling from f ~ 1/Zf * N(f|m,K) P(y|f), we use a 
+      parametrisation in terms of alpha = inv(K)*(f-m) and sample from 
+      alpha ~ P(a) = 1/Za * N(a|0,inv(K)) P(y|K*a+m) to increase numerical 
+      stability since log P(a) = -(a'*K*a)/2 + log P(y|K*a+m) + C and its 
+      gradient can be computed safely.
+
+      The leapfrog stepsize as a time discretisation stepsize comes with a 
+      tradeoff:
+        - too small: frequently accept, slow exploration, accurate dynamics
+        - too large: seldomly reject, fast exploration, inaccurate dynamics
+      In order to balance between the two extremes, we adaptively adjust the
+      stepsize in order to keep the acceptance rate close to a target acceptance
+      rate. Taken from http://deeplearning.net/tutorial/hmc.html.
+
+      The code issues a warning in case the overall acceptance rate did deviate
+      strongly from the target. This can indicate problems with the sampler.
+
+  The Elliptical Slice Sampler (ESS) is a straight implementation that is
+  inspired by the code shipped with the paper: Elliptical slice sampling by
+  Iain Murray, Ryan Prescott Adams and David J.C. MacKay, AISTATS 2010.
+
+  Annealed Importance Sampling (AIS) to determine the marginal likelihood is
+  described in the technical report: AIS, Radford Neal, 1998.
+  """
+  if par is None:
+    par = {}
+  if 'sampler' in par:
+    alg = par['sampler']
+  else:
+    alg = 'hmc'
+  if 'Nsample' in par:
+    N = par['Nsample']
+  else:
+    N = 200
+  if 'Nskip' in par:
+    Ns = par['Nskip']
+  else:
+    Ns = 40
+  if 'Nburnin' in par:
+    Nb =par['Nburnin']
+  else:
+    Nb = 10
+  if 'Nais' in par:
+    R = par['Nais']
+  else:
+    R = 3
+
+  # evaluate the covariance matrix
+  K = cov.feval(covf, hyp['cov'], x)
+  # evaluate the mean vector
+  m = mean.feval(meanf, hyp['mean'], x)
+  n = numpy.size(K,0)
+  # try an ordinary Cholesky decomposition
+  try:
+    cK = numpy.linalg.cholesky(K).T
+  except numpy.linalg.LinAlgError:
+    # regularise
+    sr2 = 1e-8*numpy.sum(numpy.diag(K))/n
+    cK = numpy.linalg.cholesky(K+sr2*numpy.eye(n)).T
+  # overall number of steps
+  T = numpy.dot(N+Nb,Ns)
+  # sample w/o annealing
+  alpha, Na = __sample(K,cK,m,y,likf,hyp['lik'],N,Nb,Ns,alg)
+  post = {}
+  post['alpha'] = alpha
+  al = numpy.reshape(numpy.sum(alpha,1)/N,(-1,1))
+  # inv(K) - cov(alpha)
+  post['L'] = -(numpy.linalg.solve(cK,numpy.linalg.solve(cK.T,numpy.eye(n))) + numpy.dot(al,al.T) - numpy.dot(alpha,alpha.T)/N)
+  post['sW'] = numpy.array([[]])
+  # additional output parameter
+  post['acceptance_rate_MCMC'] = Na/T
+
+  res = post
+
+  # annealed importance sampling
+  if nargout > 1:
+    # discrete time t from 1 to T and temperature tau from tau(1)=0 to tau(T)=1
+    # annealing schedule, effort at start
+    taus = numpy.power(numpy.concatenate((numpy.zeros((1,Nb)), numpy.linspace(0,1,N).reshape((1,-1))), 1),4)
+    # the fourth power idea is taken from the Kuss&Rasmussen paper, 2005 JMLR
+    # Z(t) := \int N(f|m,K) lik(f)^taus(t) df hence Z(1) = 1 and Z(T) = Z
+    # Z = Z(T)/Z(1) = prod_t Z(t)/Z(t-1); 
+    # ln Z(t)/Z(t-1) = ( tau(t)-tau(t-1) ) * loglik(f_t)
+    lZ = numpy.zeros((R,1))
+    # we have: sum(dtaus)==1
+    dtaus = numpy.diff(taus[:,Nb+numpy.arange(N)])
+    post['acceptance_rate_AIS'] = range(3)
+    for r in range(R):
+      # AIS
+      A, Na = __sample(K,cK,m,y,likf,hyp['lik'],N,Nb,Ns,alg,taus)
+      # evaluate the likelihood sample-wise
+      for t in range(1,N):
+#        if t == 199:
+#          from IPython.core.debugger import Pdb
+#          Pdb(color_scheme='Linux').set_trace()
+        lp = lik.feval(likf,hyp['lik'],y,numpy.dot(K,A[:,[t]])+m,numpy.array([[]]),'laplace')
+        lZ[r,0] = lZ[r,0] + dtaus[0,t-1]*numpy.sum(lp)
+      # additional output parameters
+      post['acceptance_rate_AIS'][r] = Na/T
+    # remove finite temperature bias, softmax average
+    nlZ = numpy.log(R) - __logsumexp(lZ)
+    res = (post, nlZ)
+    # marginal likelihood derivatives are not computed
+    if nargout > 2:
+      dnlZ = {'cov': numpy.zeros(numpy.shape(hyp['cov'])), 'lik': numpy.zeros(numpy.shape(hyp['lik'])), 'mean': numpy.zeros(numpy.shape(hyp['mean']))}
+      res += (dnlZ,)
+  return res
+
+
+def __sample(K, cK, m, y, likf, hyp, N, Nb, Ns, alg, taus=None):
+  """
+  Choose between HMC and ESS depending on the alg string.
+  """
+  if alg == 'hmc':
+    return __sample_hmc(K, m, y, likf, hyp, N, Nb, Ns, taus)
+  else:
+    return __sample_ess(cK, m, y, lik, hyp, N, Nb, Ns, taus)
+
+def __sample_hmc(K, m, y, likf, hyp, N, Nb, Ns, taus=None):
+  """
+  Sample using Hamiltonian dynamics as proposal algorithm.
+  """  
+  # use adaptive stepsize rule to enforce a specific acceptance rate 
+  epmin = 1e-6                                      # minimum leapfrog stepsize
+  epmax = 9e-1                                      # maximum leapfrog stepsize
+  ep = 1e-2                                         # initial leapfrog stepsize
+  acc_t = 0.9                                          # target acceptance rate
+  acc = 0                                             # current acceptance rate
+  epinc = 1.02 # increase factor of stepsize if acceptance rate is below target
+  epdec = 0.98 # decrease factor of stepsize if acceptance rate is above target
+  lam = 0.01    # exponential moving average computation of the acceptance rate
+                                                 # 2/(3*lam) steps half height;
+                                      # lam/nstep = 0.02/33, 0.01/66, 0.005/133
+  l = 20                     # number of leapfrog steps to perform for one step
+  n = numpy.size(K,0)
+  T = (N+Nb)*Ns                                       # overall number of steps
+  alpha = numpy.zeros((n,N))                                    # sample points
+  al = numpy.zeros((n,1))                                    # current position
+  # default is no annealing
+  if taus is not None:
+    tau = taus[0,0]
+  else:
+    tau = 1
+  gold, eold = __E(al, K, m, y, likf, hyp, tau, 2)   # initial energy, gradient  
+  Na = 0                                            # number of accepted points
+  for t in range(T):
+    # parameter from schedule
+    if taus is not None:
+      tau = taus[0,numpy.floor((t-1.)/Ns)]
+    p = numpy.random.randn(n,1)                       # random initial momentum
+    q = al
+    g = gold
+    Hold = numpy.dot(p.T,p)/2 + eold           # H = Ekin + Epot => Hamiltonian
+    # leapfrog discretization steps, Euler like
+    for ll in range(l):
+      p = p - (ep/2)*g                                # half step in momentum p
+      q = q + ep*p                                    # full step in position q
+      g = __E(q, K, m, y, likf, hyp, tau)             # compute new gradient  g
+      p = p - (ep/2)*g                                # half step in momentum p
+    g, e = __E(q, K, m, y, likf, hyp, tau, 2)
+    H = numpy.dot(p.T,p)/2 + e                          # recompute Hamiltonian
+    acc = (1-lam)*acc                           # decay current acceptance rate
+    # accept with p = min(1,exp(Hold-H))
+    if numpy.log(numpy.random.rand()) < Hold-H:
+      al = q                                                  # keep new state,
+      gold = g                                                       # gradient
+      eold = e                                           # and potential energy
+      acc = acc + lam                         # increase rate due to acceptance
+      Na = Na + 1                              # increase number accepted steps
+    # too large acceptance rate => increase leapfrog stepsize
+    if acc > acc_t:
+      ep = epinc*ep
+    # too small acceptance rate => decrease leapfrog stepsize
+    else:
+      ep = epdec*ep
+    # clip stepsize ep to [epmin,epmax]
+    if ep < epmin:
+      ep = epmin
+    if ep > epmax:
+      ep = epmax
+    # keep one state out of Ns
+    if numpy.mod(t,Ns) == 0:
+      # wait for Nb burn-in steps
+      if t/Ns > Nb:
+        alpha[:,[t/Ns-Nb]] = al
+
+  # Acceptance rate in the right ballpark?
+  if Na/T < acc_t*0.9 or 1.07*acc_t < Na/T:
+    print 'The acceptance rate %1.2f%% is not within' % (100*Na/T,)
+    print ' [%1.1f, %1.1f]%%\n' % (100*acc_t*0.9, 100*acc_t*1.07)
+    if taus is None:
+      print 'Bad (HMC) acceptance rate'
+    else:
+      print 'Bad (AIS) acceptance rate'
+
+  return (alpha, Na)
+
+
+def __E(al, K, m, y, likf, hyp, tau=None, nargout=1):
+  """
+  Potential energy function value and its gradient.
+  """
+  # E(f) = E(al) = al'*K*al/2 - tau*loglik(f), f = K*al+m
+  # g(f) = g(al) = al - tau*dloglik(f) => dE/dal = K*( al-dloglik(f) )
+  if tau is None:
+    tau = 1
+  if tau > 1:
+    tau = 1
+  if tau < 0:
+    tau = 0
+  Kal = numpy.dot(K,al)
+  lp, dlp = lik.feval(likf, hyp, y, Kal+m, numpy.array([[]]), 'laplace', nargout=2)
+  g = Kal - numpy.dot(K,numpy.dot(tau,dlp))
+  res = g
+  if nargout > 1:
+    e = numpy.dot(al.T,Kal)/2 - tau*numpy.sum(lp)
+    res = (g, e)
+  return res
+
+
+def __logsumexp(x):
+  """
+  y = logsumexp(x) = log(sum(exp(x(:))) avoiding overflow
+  """
+  xx = numpy.reshape(x.T,(-1,1))
+  mx = numpy.max(xx)
+  return numpy.log(numpy.sum(numpy.exp(xx-mx)))+mx
 
 
