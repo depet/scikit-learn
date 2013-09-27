@@ -403,12 +403,12 @@ def mcmc(hyp, meanf, covf, likf, x, y, par=None, nargout=None):
   alpha, Na = __sample(K,cK,m,y,likf,hyp['lik'],N,Nb,Ns,alg)
   post = {}
   post['alpha'] = alpha
-  al = numpy.reshape(numpy.sum(alpha,1)/N,(-1,1))
+  al = numpy.reshape(numpy.sum(alpha,1)/float(N),(-1,1))
   # inv(K) - cov(alpha)
-  post['L'] = -(numpy.linalg.solve(cK,numpy.linalg.solve(cK.T,numpy.eye(n))) + numpy.dot(al,al.T) - numpy.dot(alpha,alpha.T)/N)
+  post['L'] = -(numpy.linalg.solve(cK,numpy.linalg.solve(cK.T,numpy.eye(n))) + numpy.dot(al,al.T) - numpy.dot(alpha,alpha.T)/float(N))
   post['sW'] = numpy.array([[]])
   # additional output parameter
-  post['acceptance_rate_MCMC'] = Na/T
+  post['acceptance_rate_MCMC'] = float(Na)/T
 
   res = post
 
@@ -424,20 +424,17 @@ def mcmc(hyp, meanf, covf, likf, x, y, par=None, nargout=None):
     lZ = numpy.zeros((R,1))
     # we have: sum(dtaus)==1
     dtaus = numpy.diff(taus[:,Nb+numpy.arange(N)])
-    post['acceptance_rate_AIS'] = range(3)
+    post['acceptance_rate_AIS'] = numpy.zeros((3,1))
     for r in range(R):
       # AIS
       A, Na = __sample(K,cK,m,y,likf,hyp['lik'],N,Nb,Ns,alg,taus)
-      # evaluate the likelihood sample-wise
+      # evaluate the likelihood sample-wise      
       for t in range(1,N):
-#        if t == 199:
-#          from IPython.core.debugger import Pdb
-#          Pdb(color_scheme='Linux').set_trace()
-        lp = lik.feval(likf,hyp['lik'],y,numpy.dot(K,A[:,[t]])+m,numpy.array([[]]),'laplace')
+        lp = lik.feval(likf,hyp['lik'],y,numpy.dot(K,A[:,[t]])+m,numpy.array([[]]),'laplace',nargout=1)
         lZ[r,0] = lZ[r,0] + dtaus[0,t-1]*numpy.sum(lp)
       # additional output parameters
-      post['acceptance_rate_AIS'][r] = Na/T
-    # remove finite temperature bias, softmax average
+      post['acceptance_rate_AIS'][r,0] = float(Na)/T
+    # remove finite temperature bias, softmax average    
     nlZ = numpy.log(R) - __logsumexp(lZ)
     res = (post, nlZ)
     # marginal likelihood derivatives are not computed
@@ -486,19 +483,19 @@ def __sample_hmc(K, m, y, likf, hyp, N, Nb, Ns, taus=None):
   for t in range(T):
     # parameter from schedule
     if taus is not None:
-      tau = taus[0,numpy.floor((t-1.)/Ns)]
+      tau = taus[0,numpy.floor(t/Ns)]
     p = numpy.random.randn(n,1)                       # random initial momentum
     q = al
     g = gold
-    Hold = numpy.dot(p.T,p)/2 + eold           # H = Ekin + Epot => Hamiltonian
+    Hold = numpy.dot(p.T,p)/2. + eold          # H = Ekin + Epot => Hamiltonian
     # leapfrog discretization steps, Euler like
     for ll in range(l):
-      p = p - (ep/2)*g                                # half step in momentum p
+      p = p - (ep/2.)*g                               # half step in momentum p
       q = q + ep*p                                    # full step in position q
       g = __E(q, K, m, y, likf, hyp, tau)             # compute new gradient  g
-      p = p - (ep/2)*g                                # half step in momentum p
+      p = p - (ep/2.)*g                               # half step in momentum p
     g, e = __E(q, K, m, y, likf, hyp, tau, 2)
-    H = numpy.dot(p.T,p)/2 + e                          # recompute Hamiltonian
+    H = numpy.dot(p.T,p)/2. + e                         # recompute Hamiltonian
     acc = (1-lam)*acc                           # decay current acceptance rate
     # accept with p = min(1,exp(Hold-H))
     if numpy.log(numpy.random.rand()) < Hold-H:
@@ -519,14 +516,14 @@ def __sample_hmc(K, m, y, likf, hyp, N, Nb, Ns, taus=None):
     if ep > epmax:
       ep = epmax
     # keep one state out of Ns
-    if numpy.mod(t,Ns) == 0:
+    if numpy.mod(t+1,Ns) == 0:
       # wait for Nb burn-in steps
-      if t/Ns > Nb:
-        alpha[:,[t/Ns-Nb]] = al
+      if (t+1)/Ns > Nb:
+        alpha[:,[(t+1)/Ns-Nb-1]] = al
 
   # Acceptance rate in the right ballpark?
-  if Na/T < acc_t*0.9 or 1.07*acc_t < Na/T:
-    print 'The acceptance rate %1.2f%% is not within' % (100*Na/T,)
+  if float(Na)/T < acc_t*0.9 or 1.07*acc_t < float(Na)/T:
+    print 'The acceptance rate %1.2f%% is not within' % (100*float(Na)/T,)
     print ' [%1.1f, %1.1f]%%\n' % (100*acc_t*0.9, 100*acc_t*1.07)
     if taus is None:
       print 'Bad (HMC) acceptance rate'
@@ -553,7 +550,7 @@ def __E(al, K, m, y, likf, hyp, tau=None, nargout=1):
   g = Kal - numpy.dot(K,numpy.dot(tau,dlp))
   res = g
   if nargout > 1:
-    e = numpy.dot(al.T,Kal)/2 - tau*numpy.sum(lp)
+    e = numpy.dot(al.T,Kal)/2. - tau*numpy.sum(lp)
     res = (g, e)
   return res
 
