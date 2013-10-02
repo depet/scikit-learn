@@ -162,6 +162,73 @@ def rqIso(hyp=None, x=None, z=None, hi=None, dg=None):
   return K
 
 
+def rqArd(hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Rational Quadratic covariance function with Automatic Relevance Determination
+  (ARD) distance measure. The covariance function is parameterized as:
+
+  k(x^p,x^q) = sf2 * [1 + (x^p - x^q)'*inv(P)*(x^p - x^q)/(2*alpha)]^(-alpha)
+
+  where the P matrix is diagonal with ARD parameters ell_1^2,...,ell_D^2, where
+  D is the dimension of the input space, sf2 is the signal variance and alpha
+  is the shape parameter for the RQ covariance. The hyperparameters are:
+
+  hyp = [ log(ell_1)
+          log(ell_2)
+           ..
+          log(ell_D)
+          log(sqrt(sf2))
+          log(alpha) ]
+  """
+  #report number of parameters
+  if x is None:
+    return 'D+2'
+  
+  if z is None:
+    z = numpy.array([[]])
+    
+  if dg is None:
+    dg = False
+  
+  xeqz = numpy.size(z) == 0
+  
+  n, D = numpy.shape(x)
+
+  ell = numpy.exp(hyp[0:D])
+  sf2 = numpy.exp(2*hyp[D])
+  alpha = numpy.exp(hyp[D+1])
+
+  # precompute squared distances
+  if dg:                                                           # vector kxx
+    D2 = numpy.zeros((numpy.size(x,0),1))
+  else:
+    if xeqz:                                             # symmetric matrix Kxx
+      D2 = util.sq_dist(numpy.dot(numpy.diagflat(1./ell),x.T)
+    else:                                               # cross covariances Kxz
+      D2 = util.sq_dist(numpy.dot(numpy.diagflat(1./ell),x.T), numpy.dot(numpy.diagflat(1./ell),z.T))
+
+  if hi is None:                                                  # covariances
+    K = sf2*numpy.power(1+0.5*D2/alpha, -alpha)
+  else:                                                           # derivatives
+    if hi >= 0 and hi < D:                             # length scale parameter
+      if dg:
+        K = D2*0
+      else:
+        if xeqz:
+          K = sf2*numpy.power(1+0.5*D2/alpha, -alpha-1)*util.sq_dist(x[:,[i].T/ell[i])
+        else:
+          K = sf2*numpy.power(1+0.5*D2/alpha, -alpha-1)*util.sq_dist(x[:,[i]].T/ell[i], z[:,[i]].T/ell[i])
+    elif hi == D:                                         # magnitude parameter
+      K = 2*sf2*numpy.power(1+0.5*D2/alpha, -alpha)
+    elif hi == D+1:
+      K = 1+0.5*D2/alpha
+      K = sf2*numpy.power(K, -alpha)*(0.5*D2/K-numpy.dot(alpha,numpy.log(K)))
+    else:
+      raise AttributeError('Unknown hyperparameter')
+
+  return K
+
+
 def seArd(hyp=None, x=None, z=None, hi=None, dg=None):
   """
   Squared Exponential covariance function with Automatic Relevance Detemination
