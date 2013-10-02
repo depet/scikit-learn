@@ -16,12 +16,6 @@ def gauss(hyp, y=None, mu=None, s2=None, inf=None, hi=None, nargout=None):
   respectively, see likFunctions.m for the details. In general, care is taken
   to avoid numerical issues when the arguments are extreme.
   """
-  if nargout is None:
-    if hi is not None and inf == 'ep':
-      nargout = 1
-    else:
-      nargout = 3
-    
   if mu is None:
     return '1'
 
@@ -45,23 +39,39 @@ def gauss(hyp, y=None, mu=None, s2=None, inf=None, hi=None, nargout=None):
       return (lp, mu, s2 + sn2)
   else:
     if inf == 'laplace':
-      i = 0
-#      if hi is None:
-#        if numpy.size(y) == 0:
-#          y = 0
-#        ymmu = y-mu
-#        lp = -ymmu.^2/(2*sn2) - log(2*pi*sn2)/2
-#        dlp = ymmu/sn2
-#        d2lp = -ones(size(ymmu))/sn2
-#        d3lp = zeros(size(ymmu))
-#        return (lp, dlp, d2lp, d3lp)
-#      else:
-#        lp_dhyp = (y-mu).^2/sn2 - 1
-#        dlp_dhyp = 2*(mu-y)/sn2
-#        d2lp_dhyp = 2*ones(size(mu))/sn2
-#        return (lp_dhyp, dlp_dhyp, d2lp_dhyp)
+      if hi is None:
+        if nargout is None:
+          nargout = 4
+        if numpy.size(y) == 0:
+          y = 0
+        ymmu = y-mu
+        lp = -numpy.power(ymmu,2)/(2*sn2) - numpy.log(2*numpy.pi*sn2)/2
+        res = lp
+        if nargout > 1:
+          dlp = ymmu/sn2
+          res = (lp, dlp)
+        if nargout > 2:
+          d2lp = -numpy.ones(numpy.shape(ymmu))/sn2
+          res += (d2lp,)
+        if nargout > 3:
+          d3lp = numpy.zeros(numpy.shape(ymmu))
+          res += (d3lp)
+      else:
+        if nargout is None:
+          nargout = 3
+        lp_dhyp = numpy.power(y-mu,2)/sn2 - 1
+        res = lp
+        if nargout > 1:
+          dlp_dhyp = 2*(mu-y)/sn2
+          res = (lp, dlp_dhyp)
+        if nargout > 2:
+          d2lp_dhyp = 2*numpy.ones(numpy.shape(mu))/sn2
+          res += (d2lp_dhyp,)
+      return res
     elif inf == 'ep':
       if hi is None:
+        if nargout is None:
+          nargout = 3
         lZ = -(y-mu)**2/(sn2+s2)/2 - numpy.log(2*numpy.pi*(sn2+s2))/2
         dlZ  = (y-mu)/(sn2+s2)
         d2lZ = -1./(sn2+s2)
@@ -72,6 +82,8 @@ def gauss(hyp, y=None, mu=None, s2=None, inf=None, hi=None, nargout=None):
         else:
           return (lZ, dlZ, d2lZ)
       else:
+        if nargout is None:
+          nargout = 1
         dlZhyp = ((y-mu)**2/(sn2+s2)-1)/(1+s2/sn2)
         if nargout == 1:
           return dlZhyp
@@ -157,8 +169,31 @@ def erf(hyp, y=None, mu=None, s2=None, inf=None, hi=None, nargout=None):
         res += (ys2,)
     return res
   else:
+    # TODO: TEST
     if inf == 'laplace':
-      a = 0
+      # no derivative mode
+      if hi is None:
+        f = mu
+        yf = y*f                                   # product latents and labels
+        p, lp = __cumGauss(y, f, nargout=2)
+        res = lp
+        # derivative of log likelihood
+        if nargout > 1:
+          n_p = __gauOverCumGauss(yf, p)
+          dlp = y*n_p                              # derivative of log likelihood
+          res = (lp, dlp)
+          # 2nd derivative of log likelihood
+          if nargout > 2:
+            d2lp = -numpy.power(n_p,2) - yf*n_p
+            res += (d2lp,)
+            # 3rd derivative of log likelihood
+            if nargout > 3:
+              d3lp = 2*y*numpy.power(n_p,3) + 3*f*numpy.power(n_p,2) + y*(numpy.power(f,2)-1)*n_p
+              res += (d3lp,)
+        return res
+      # derivative mode
+      else:
+        return numpy.array([[]])
     elif inf == 'ep':
       if hi is None:
         if nargout is None:
@@ -296,8 +331,36 @@ def logistic(hyp, y=None, mu=None, s2=None, inf=None, hi=None, nargout=None):
         res += (ys2,)
     return res
   else:
+    # TODO: TEST
     if inf == 'laplace':
-      a = 0
+      # no derivative mode
+      if hi is None:
+        # product latents and labels
+        f = mu
+        yf = y*f
+        s = -yf
+        ps = numpy.maximum(0,s)
+        # lp = -(log(1+exp(s)))
+        lp = -(ps+numpy.log(numpy.exp(-ps) + numpy.exp(s-ps)))
+        res = lp
+        # first derivatives
+        if nargout > 1:
+          s = numpy.minimum(0,f)
+          p = numpy.exp(s)/(numpy.exp(s) + numpy.exp(s-f)) # p = 1./(1+exp(-f))
+          dlp = (y+1)/2.-p                       # derivative of log likelihood
+          res = (lp,dlp)
+          # 2nd derivative of log likelihood
+          if nargout > 2:
+            d2lp = -numpy.exp(2*s-f)/numpy.power(numpy.exp(s)+numpy.exp(s-f),2)
+            res += (d2lp,)
+            # 3rd derivative of log likelihood
+            if nargout > 3:
+              d3lp = 2*d2lp*(0.5-p)
+              res += (d3lp)
+        return res
+      # derivative mode
+      else:
+        return numpy.array([[]])
     elif inf == 'ep':
       if hi is None:
         if nargout is None:
@@ -322,7 +385,7 @@ def logistic(hyp, y=None, mu=None, s2=None, inf=None, hi=None, nargout=None):
         # contribution to the second derivative
         
         # empirically determined bound at val==0
-        val = numpy.abs(mu)-196/200*s2-4
+        val = numpy.abs(mu)-196./200.*s2-4.
         # interpolation weights
         lam = 1/(1+numpy.exp(-10*val))
         # apply the same to p(y|f) = 1 - p(-y|f)
