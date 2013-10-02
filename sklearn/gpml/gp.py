@@ -10,8 +10,8 @@ from . import mean
 from . import util
 
 class GP(BaseEstimator):
-#class GP():
-  """The GP model class.
+  """
+  The GP model class.
 
   Parameters
   ----------
@@ -112,6 +112,8 @@ class GP(BaseEstimator):
 
   _likelihood_functions = {
     'gauss': lik.gauss}
+    
+  __prnt_counter = 0
 
 
   def __init__(self, x, y, hyp=None, inffunc=inf.exact, meanfunc=mean.zero, covfunc=cov.seArd, likfunc=lik.gauss):
@@ -157,30 +159,32 @@ class GP(BaseEstimator):
     else:
       hyp0 = self.__setHyp(hyp0)
     hyp0 = numpy.concatenate((numpy.reshape(hyp0['mean'],(-1,)), numpy.reshape(hyp0['cov'],(-1,)), numpy.reshape(hyp0['lik'],(-1,))))
-    res = scipy.optimize.minimize(self._gp, hyp0, (self.inff, self.meanf, self.covf, self.likf, x, y), method='CG', jac=True) #options={'maxiter': maxiter}
+    self.__prnt_counter = 0
+    res = scipy.optimize.minimize(self._gp, hyp0, (self.inff, self.meanf, self.covf, self.likf, x, y), method='Newton-CG', jac=True, callback=self.__prnt, options={'maxiter': maxiter})
     hyp = res.x
     self.hyp = self.__setHyp(hyp)
     return self
 
+  def __prnt(self, x):
+    self.__prnt_counter += 1
+    nlZ, dnlZ = self._gp(x, self.inff, self.meanf, self.covf, self.likf, self.x, self.y)
+    print 'Iteration %d; Value %f' % (self.__prnt_counter, nlZ)
 
-  def _prnt(self, x):
-    print x
 
-
-  def predict(self, xs, yr=None, batch_size=None):
+  def predict(self, xs, ys=None, batch_size=None, nargout=2):
     """
     This function evaluates the GP model at x.
 
     Parameters
     ----------
-    Xs : array_like
+    xs : array_like
       An array with shape (n_eval, n_features) giving the point(s) at
       which the prediction(s) should be made.
 
-    yr : boolean, optional
+    ys : array_like, optional
       An array with shape (n_eval, ) giving the real targets at ...
-      Default assumes yr = None and evaluates only the BLUP (mean
-      prediction).
+      Default assumes ys = None and evaluates only the mean
+      prediction.
 
     batch_size : integer, optional
       An integer giving the maximum number of points that can be
@@ -202,8 +206,13 @@ class GP(BaseEstimator):
         xs = xs.T
       else:
         raise AttributeError('Dimension of the test inputs (xs) disagree with dimension of the train inputs (x).')
-    mu, s2 = self._gp(self.hyp, self.inff, self.meanf, self.covf, self.likf, self.x, self.y, xs, batch_size=batch_size)
-    return (mu, s2)
+    res = self._gp(self.hyp, self.inff, self.meanf, self.covf, self.likf, self.x, self.y, xs, ys, nargout, batch_size=batch_size)
+    if nargout <= 1:
+      return res[0]
+    elif nargout <= 6:
+      return res[:nargout]
+    else:
+      return res[:6]
 
 
   def _gp(self, hyp, inff, meanf, covf, likf, x, y, xs=None, ys=None, nargout=None, post=None, hypdict=None, batch_size=None):
@@ -223,7 +232,6 @@ class GP(BaseEstimator):
     D = numpy.size(x,1);
     
     if not isinstance(hyp, dict):
-      #hypOrg = hyp
       if hypdict is None:
         hypdict = False
       shp = numpy.shape(hyp)
@@ -247,16 +255,21 @@ class GP(BaseEstimator):
         hyp['cov'] = numpy.array([[]])
       if eval(cov.feval(covf)) != numpy.size(hyp['cov']):
         raise AttributeError('Number of cov function hyperparameters disagree with cov function')
-    
+
       if 'lik' not in hyp:
         hyp['lik'] = numpy.array([[]])
       if eval(lik.feval(likf)) != numpy.size(hyp['lik']):
         raise AttributeError('Number of lik function hyperparameters disagree with lik function')
-    
-    try:
-      # TODO: complete code for calssification
-      #if lik == lik.erf or lik == lik.logistic:
 
+    # call the inference method
+    try:
+      # issue a warning if a classification likelihood is used in conjunction with
+      # labels different from +1 and -1
+      if lik == lik.erf or lik == lik.logistic:
+        uy = numpy.unique(y)
+        if numpy.any(~(uy == -1) & ~(uy == 1)):
+          print 'You try classification with labels different from {+1,-1}'
+      # compute marginal likelihood and its derivatives only if needed
       if xs is not None:
         if post is None:
           post = inff(hyp, meanf, covf, likf, x, y, nargout=1)
@@ -265,7 +278,6 @@ class GP(BaseEstimator):
           post, nlZ = inff(hyp, meanf, covf, likf, x, y, nargout=2)
         else:
           post, nlZ, dnlZ = inff(hyp, meanf, covf, likf, x, y, nargout=3)
-        nlZ = nlZ[0,0]
     except Exception, e:
       if xs is not None:
         raise Exception('Inference method failed [%s]' % (e,))
@@ -278,6 +290,7 @@ class GP(BaseEstimator):
             dnlZ = numpy.concatenate((0*numpy.reshape(hyp['mean'],(-1,1)), 0*numpy.reshape(hyp['cov'],(-1,1)), 0*numpy.reshape(hyp['lik'],(-1,1))))
             dnlZ = numpy.reshape(dnlZ, shp)
         return (numpy.NaN, dnlZ)
+
 
     if xs is None:
       if nargout == 1:
@@ -424,19 +437,15 @@ class GP(BaseEstimator):
   def __setFunc(self, f, ftype, lower=False):
     if ftype == 'inference':
       fs = self._inference_functions
-      #m = 'inf'
       m = 'sklearn.gpml.inf'
     elif ftype == 'mean':
       fs = self._mean_functions
-      #m = 'mean'
       m = 'sklearn.gpml.mean'
     elif ftype == 'covariance':
       fs = self._covariance_functions
-      #m = 'cov'
       m = 'sklearn.gpml.cov'
     elif ftype == 'likelihood':
       fs = self._covariance_functions
-      #m = 'lik'
       m = 'sklearn.gpml.lik'
     else:
       raise AttributeError('Unknown function type.')
@@ -452,7 +461,7 @@ class GP(BaseEstimator):
         else:
           raise AttributeError('Unknown %s function.' % ftype)
       elif isinstance(fp, tuple) and ftype != 'inference':
-        fp = prepareFunc(fp, ftype, True)
+        fp = self.__setFunc(fp, ftype, True)
       elif hasattr(fp, '__call__'):
         if fp.__module__ != m:
           raise AttributeError('%s function not from %s module.' % (ftype.capitalize(), m))

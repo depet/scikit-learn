@@ -44,10 +44,153 @@ import numpy.matlib
 from . import util
 
 
+def lin(hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Linear covariance function. The covariance function is parameterized as:
+
+  k(x^p,x^q) = x^p'*x^q
+
+  The are no hyperparameters:
+
+  hyp = [ ]
+
+  Note that there is no bias or scale term; use covConst to add these.
+  """
+  #report number of parameters
+  if x is None:
+    return '0'
+
+  if z is None:
+    z = numpy.array([[]])
+
+  if dg is None:
+    dg = False
+
+  xeqz = numpy.size(z) == 0
+
+  # compute inner products
+  if dg:
+    K = numpy.sum(x*x,1)
+  else:
+    if xeqz:                                             # symmetric matrix Kxx
+      K = numpy.dot(x,x.T)
+    else:                                               # cross covariances Kxz
+      K = numpy.dot(x,z.T)
+
+  if hi is not None:                                              # derivatives
+    raise AttributeError('Unknown hyperparameter')
+
+  return K
+
+
+def linArd(hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Linear covariance function with Automatic Relevance Determination (ARD). The
+  covariance function is parameterized as:
+
+  k(x^p,x^q) = x^p'*inv(P)*x^q
+
+  where the P matrix is diagonal with ARD parameters ell_1^2,...,ell_D^2, where
+  D is the dimension of the input space. The hyperparameters are:
+
+  hyp = [ log(ell_1)
+          log(ell_2)
+           ..
+          log(ell_D) ]
+
+  Note that there is no bias term; use covConst to add a bias.
+  """
+  #report number of parameters
+  if x is None:
+    return 'D'
+
+  if z is None:
+    z = numpy.array([[]])
+
+  if dg is None:
+    dg = False
+
+  xeqz = numpy.size(z) == 0
+
+  ell = numpy.exp(hyp)
+  n, D = numpy.shape(x)
+  x = numpy.dot(x,numpy.diagflat(1./ell))
+
+  # compute inner products
+  if dg:
+    K = numpy.sum(x*x,1)
+  else:
+    if xeqz:                                             # symmetric matrix Kxx
+      K = numpy.dot(x,x.T)
+    else:                                               # cross covariances Kxz
+      z = numpy.dot(z,numpy.diagflat(1./ell))
+      K = numpy.dot(x,z.T)
+
+  if hi is not None:                                              # derivatives
+    if hi > 0 and hi < D:
+      if dg:
+        K = -2*x[:,[i]]*x[:,[i]]
+      else:
+        if xeqz:
+          K = -2*numpy.dot(x[:,[i]],x[:,[i]].T)
+        else:
+          K = -2*numpy.dot(x[:,[i]],z[:,[i]].T)
+    else:
+      raise AttributeError('Unknown hyperparameter')
+
+  return K
+
+
+def linOne(hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Linear covariance function with a single hyperparameter. The covariance
+  function is parameterized as:
+
+  k(x^p,x^q) = (x^p'*x^q + 1)/t2;
+
+  where the P matrix is t2 times the unit matrix. The second term plays the
+  role of the bias. The hyperparameter is:
+
+  hyp = [ log(sqrt(t2)) ]
+  """
+  #report number of parameters
+  if x is None:
+    return '1'
+
+  if z is None:
+    z = numpy.array([[]])
+
+  if dg is None:
+    dg = False
+
+  xeqz = numpy.size(z) == 0
+
+  it2 = numpy.exp(-2*hyp)
+
+  # compute inner products
+  if dg:
+    K = numpy.sum(x*x,1)
+  else:
+    if xeqz:                                             # symmetric matrix Kxx
+      K = numpy.dot(x,x.T)
+    else:                                               # cross covariances Kxz
+      K = numpy.dot(x,z.T)
+
+  if hi is None:                                                  # covariances
+    K = it2*(1+K)
+  else:                                                           # derivatives
+    if hi == 0:
+      K = -2*it2*(1+K)
+    else:
+      raise AttributeError('Unknown hyperparameter')
+
+  return K
+
+
 def periodic(hyp=None, x=None, z=None, hi=None, dg=None):
   """
   Stationary covariance function for a smooth periodic function, 
-  with period p::
+  with period p:
   
   k(x^p,x^q) = sf2 * exp(-2*sin^2(pi*||(x^p - x^q)||/p)/ell^2)
   
@@ -156,6 +299,73 @@ def rqIso(hyp=None, x=None, z=None, hi=None, dg=None):
     elif hi == 2:
       K = 1+0.5*D2/alpha
       K = sf2*numpy.power(K,-alpha)*(0.5*D2/K - alpha*numpy.log(K))
+    else:
+      raise AttributeError('Unknown hyperparameter')
+
+  return K
+
+
+def rqArd(hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Rational Quadratic covariance function with Automatic Relevance Determination
+  (ARD) distance measure. The covariance function is parameterized as:
+
+  k(x^p,x^q) = sf2 * [1 + (x^p - x^q)'*inv(P)*(x^p - x^q)/(2*alpha)]^(-alpha)
+
+  where the P matrix is diagonal with ARD parameters ell_1^2,...,ell_D^2, where
+  D is the dimension of the input space, sf2 is the signal variance and alpha
+  is the shape parameter for the RQ covariance. The hyperparameters are:
+
+  hyp = [ log(ell_1)
+          log(ell_2)
+           ..
+          log(ell_D)
+          log(sqrt(sf2))
+          log(alpha) ]
+  """
+  #report number of parameters
+  if x is None:
+    return 'D+2'
+  
+  if z is None:
+    z = numpy.array([[]])
+    
+  if dg is None:
+    dg = False
+  
+  xeqz = numpy.size(z) == 0
+  
+  n, D = numpy.shape(x)
+
+  ell = numpy.exp(hyp[0:D])
+  sf2 = numpy.exp(2*hyp[D])
+  alpha = numpy.exp(hyp[D+1])
+
+  # precompute squared distances
+  if dg:                                                           # vector kxx
+    D2 = numpy.zeros((numpy.size(x,0),1))
+  else:
+    if xeqz:                                             # symmetric matrix Kxx
+      D2 = util.sq_dist(numpy.dot(numpy.diagflat(1./ell),x.T)
+    else:                                               # cross covariances Kxz
+      D2 = util.sq_dist(numpy.dot(numpy.diagflat(1./ell),x.T), numpy.dot(numpy.diagflat(1./ell),z.T))
+
+  if hi is None:                                                  # covariances
+    K = sf2*numpy.power(1+0.5*D2/alpha, -alpha)
+  else:                                                           # derivatives
+    if hi >= 0 and hi < D:                             # length scale parameter
+      if dg:
+        K = D2*0
+      else:
+        if xeqz:
+          K = sf2*numpy.power(1+0.5*D2/alpha, -alpha-1)*util.sq_dist(x[:,[i].T/ell[i])
+        else:
+          K = sf2*numpy.power(1+0.5*D2/alpha, -alpha-1)*util.sq_dist(x[:,[i]].T/ell[i], z[:,[i]].T/ell[i])
+    elif hi == D:                                         # magnitude parameter
+      K = 2*sf2*numpy.power(1+0.5*D2/alpha, -alpha)
+    elif hi == D+1:
+      K = 1+0.5*D2/alpha
+      K = sf2*numpy.power(K, -alpha)*(0.5*D2/K-numpy.dot(alpha,numpy.log(K)))
     else:
       raise AttributeError('Unknown hyperparameter')
 
