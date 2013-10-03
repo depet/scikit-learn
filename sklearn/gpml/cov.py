@@ -868,7 +868,7 @@ def fitc(covf, xu, hyp=None, x=None, z=None, hi=None, dg=None, nargout=1):
 
 
 
-def feval(fun, hyp=None, x=None, z=None, hi=None, dg=None, nargout=None):
+def feval(fun, hyp=None, x=None, z=None, hi=None, dg=None, d=None, nargout=None):
   """
   Evaluates covariance functions.
   """
@@ -883,8 +883,8 @@ def feval(fun, hyp=None, x=None, z=None, hi=None, dg=None, nargout=None):
       if len(fun) < 3:
         raise AttributeError('FITC covariance function must contain pseudo inputs.')
       return f(fun[1], fun[2], hyp, x, z, hi, dg, nargout)
-    #f == cov.maternIso or f == cov.poly or f == cov.ppIso:
-    #  ...
+    elif f == cov.poly:
+      return f(d, hyp, x, z, hi, dg)
     else:
       return f(hyp, x, z, hi, dg)
   else:
