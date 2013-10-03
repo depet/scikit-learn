@@ -358,7 +358,7 @@ def rqArd(hyp=None, x=None, z=None, hi=None, dg=None):
         K = D2*0
       else:
         if xeqz:
-          K = sf2*numpy.power(1+0.5*D2/alpha, -alpha-1)*util.sq_dist(x[:,[i].T/ell[i])
+          K = sf2*numpy.power(1+0.5*D2/alpha, -alpha-1)*util.sq_dist(x[:,[i]].T/ell[i])
         else:
           K = sf2*numpy.power(1+0.5*D2/alpha, -alpha-1)*util.sq_dist(x[:,[i]].T/ell[i], z[:,[i]].T/ell[i])
     elif hi == D:                                         # magnitude parameter
