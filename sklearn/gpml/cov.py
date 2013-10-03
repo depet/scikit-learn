@@ -292,6 +292,58 @@ def periodic(hyp=None, x=None, z=None, hi=None, dg=None):
   return K
 
 
+def poly(d=None, hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Polynomial covariance function. The covariance function is parameterized as:
+
+  k(x^p,x^q) = sf^2 * ( c + (x^p)'*(x^q) )^d 
+
+  The hyperparameters are:
+
+  hyp = [ log(c)
+          log(sf)  ]
+  """
+  #report number of parameters
+  if x is None:
+    return '2'
+  
+  if z is None:
+    z = numpy.array([[]])
+    
+  if dg is None:
+    dg = False
+  
+  xeqz = numpy.size(z) == 0
+
+  c = numpy.exp(hyp[0])                                  # inhomogeneous offset
+  sf2 = numpy.exp(2*hyp[1])                                   # signal variance
+
+  if d != max(1,numpy.fix(d)):                                         # degree
+    raise AttributeError('Only nonzero integers allowed for d.')
+  
+  # precompute inner products
+  if dg:                                                           # vector kxx
+    K = numpy.sum(x*x,1)
+  else:
+    if xeqz:                                             # symmetric matrix Kxx
+      K = numpy.dot(x,x.T)
+    else:                                               # cross covariances Kxz
+      K = numpy.dot(x,z.T)
+
+  if hi is None:                                                  # covariances
+    K = sf2*numpy.power(c+K,d)
+  else:                                                           # derivatives
+    if i == 0:
+      K = c*d*sf2*numpy.power(c+K,d-1)
+    elif i == 1:
+      K = 2*sf2*numpy.power(c+K,d)
+    else:
+      raise Attributeerror('Unknown hyperparameter')
+
+  return K
+
+
+
 def rqIso(hyp=None, x=None, z=None, hi=None, dg=None):
   """
   Rational Quadratic covariance function with isotropic distance measure.
