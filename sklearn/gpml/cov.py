@@ -44,6 +44,49 @@ import numpy.matlib
 from . import util
 
 
+def const(hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Covariance function for a constant function. The covariance function is
+  parameterized as:
+
+  k(x^p,x^q) = s2;
+
+  The scalar hyperparameter is:
+
+  hyp = [ log(sqrt(s2)) ]
+  """
+  #report number of parameters
+  if x is None:
+    return '1'
+
+  if z is None:
+    z = numpy.array([[]])
+
+  if dg is None:
+    dg = False
+
+  xeqz = numpy.size(z) == 0
+
+  s2 = numpy.exp(2*hyp)
+  n = numpy.size(x,0)
+
+  if gd:                                                           # vector kxx
+    K = s2*numpy.ones((n,1))
+  else:
+    if xeqz:                                             # symmetric matrix Kxx
+      K = s2*numpy.ones((n,n))
+    else:                                               # cross covariances Kxz
+      K = s2*numpy.ones((m,numpy.size(z,0)))
+
+  if hi is not None:                                              # derivatives
+    if hi == 0:
+      K = 2*K
+    else:
+      raise AttributeError('Unknown hyperparameter')
+
+  return K
+
+
 def lin(hyp=None, x=None, z=None, hi=None, dg=None):
   """
   Linear covariance function. The covariance function is parameterized as:
