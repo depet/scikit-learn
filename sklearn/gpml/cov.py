@@ -346,7 +346,7 @@ def rqArd(hyp=None, x=None, z=None, hi=None, dg=None):
     D2 = numpy.zeros((numpy.size(x,0),1))
   else:
     if xeqz:                                             # symmetric matrix Kxx
-      D2 = util.sq_dist(numpy.dot(numpy.diagflat(1./ell),x.T)
+      D2 = util.sq_dist(numpy.dot(numpy.diagflat(1./ell),x.T))
     else:                                               # cross covariances Kxz
       D2 = util.sq_dist(numpy.dot(numpy.diagflat(1./ell),x.T), numpy.dot(numpy.diagflat(1./ell),z.T))
 
