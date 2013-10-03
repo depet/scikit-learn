@@ -801,10 +801,55 @@ def add(covf, hyp=None, x=None, z=None, hi=None):
 def scale(covf, hyp=None, x=None, z=None, hi=None):
   raise NotImplementedError()
 
-def mask(covf, hyp=None, x=None, z=None, hi=None):
-  raise NotImplementedError()
+def mask(covf, hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Apply a covariance function to a subset of the dimensions only. The subset can
+  either be specified by a 0/1 mask by a boolean mask or by an index set.
 
+  This function doesn't actually compute very much on its own, it merely does
+  some bookkeeping, and calls another covariance function to do the actual work.
+  """
+  mask = numpy.fix(meanf[0])             # either a binary mask or an index set
+  covf = covf[1]                             # covariance function to be masked
+  nh = util.feval(covf)      # number of hyperparameters of the full covariance
 
+  if numpy.max(mask) < 2 and numpy.size(mask) > 1:         # convert 1/0->index
+    mask = numpy.nonzero(mask)[0]
+  D = len(mask)                                              # masked dimension
+  if x is None:
+    return str(eval(nh))
+
+  if x is None:
+    return '%d' % (eval(nh),)                            # number of parameters
+  if y is None:                                           # make sure, z exists
+    z = numpy.array([[]])
+
+  xeqz = numpy.size(z) == 0
+
+  if D > numpy.size(x,1):
+    raise AttributeError('Size of masked data does not match the dimension of data.')
+  if eval(nh) != numpy.size(hyp):                       # check hyperparameters
+    raise AttributeError('Number of hyperparameters does not match size of masked data.')
+
+  if hi is None:                                                  # covariances
+    if dg:
+      K = cov.feval(covf, hyp, x[:,mask], dg=True)
+    else:
+      if xeqz:
+        K = cov.feval(covf, hyp, x[:,mask])
+      else:
+        K = cov.feval(covf, hyp, x[:,mask], z[:,mask])
+  else:                                                           # derivatives
+    if gi <= eval(nh_string):
+      if dg:
+        K = cov.feval(covf, hyp, x[:,mask], None, hi, dg=True)
+      else:
+        if xeqz:
+          K = cov.feval(covf, hyp, x[:,mask], None, hi)
+        else:
+          K = cov.feval(covf, hyp, x[:,mask], z[:,mask], hi)
+    else:
+      raise AttributeRrror('Unknown hyperparameter.')
 
 
 def fitc(covf, xu, hyp=None, x=None, z=None, hi=None, dg=None, nargout=1):
@@ -865,7 +910,6 @@ def fitc(covf, xu, hyp=None, x=None, z=None, hi=None, dg=None, nargout=1):
         return r
       else:
         return feval(covf,hyp,xu,z,hi)
-
 
 
 def feval(fun, hyp=None, x=None, z=None, hi=None, dg=None, d=None, nargout=None):
