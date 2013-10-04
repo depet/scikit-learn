@@ -799,7 +799,36 @@ def add(covf, hyp=None, x=None, z=None, hi=None):
   raise NotImplementedError()
 
 def scale(covf, hyp=None, x=None, z=None, hi=None):
-  raise NotImplementedError()
+  """
+  Compose a scale function as a scaled version of another one.
+
+  k(x^p,x^q) = sf^2 * k_0(x^p,x^q)
+
+  The hyperparameter is:
+
+  hyp = [ log(sf)  ]
+
+  This function doesn't actually compute very much on its own, it merely does
+  some bookkeeping, and calls other mean function to do the actual work.
+  """
+  if x is None:
+    return cov.feval(covf) + '+1'
+  if z is None:                                           # make sure, z exists
+    z = numpy.array([[]])
+
+  n, D = numpy.shape(x)
+  sf2 = numpy.exp(2*hyp[0])                                   # signal variance
+
+  if hi is None:                                                  # covariances
+    K = sf2*cov.feval(covf,hyp[1:],x,z)
+  else:                                                           # derivatives
+    if hi == 0:
+      K = 2*sf2*cov.feval(covf,hyp[1:],x,z)
+    else:
+      K = sf2*cov.feval(covf,hyp[1:],x,z,i-1)
+
+  return K
+
 
 def mask(covf, hyp=None, x=None, z=None, hi=None, dg=None):
   """
@@ -821,7 +850,7 @@ def mask(covf, hyp=None, x=None, z=None, hi=None, dg=None):
 
   if x is None:
     return '%d' % (eval(nh),)                            # number of parameters
-  if y is None:                                           # make sure, z exists
+  if z is None:                                           # make sure, z exists
     z = numpy.array([[]])
 
   xeqz = numpy.size(z) == 0
