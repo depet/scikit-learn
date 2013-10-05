@@ -271,12 +271,12 @@ def maternIso(d=None, hyp=None, x=None, z=None, hi=None, dg=None):
   else:
     raise AttributeError('Only 1, 3 and 5 allowed for d.')
 
-  m = lambda t, f: f(t)*exp(-t)
+  m = lambda t, f: f(t)*numpy.exp(-t)
   dm = lambda t, f: df(t)*t*numpy.exp(-t)
 
   # precompute distances
   if dg:                                                           # vector kxx
-    K = numpy.zeros(numpy.size(x,0),1)
+    K = numpy.zeros((numpy.size(x,0),1))
   else:
     if xeqz:                                             # symmetric matrix Kxx
       K = numpy.sqrt(util.sq_dist(numpy.sqrt(d)*x.T/ell))
@@ -293,7 +293,7 @@ def maternIso(d=None, hyp=None, x=None, z=None, hi=None, dg=None):
     else:
       AttributeError('Unknown hyperparameter')
 
-  raise K
+  return K
 
 
 def noise(hyp=None, x=None, z=None, hi=None, dg=None):
@@ -782,7 +782,7 @@ def mask(covf, hyp=None, x=None, z=None, hi=None, dg=None):
       else:
         K = cov.feval(covf, hyp, x[:,mask], z[:,mask])
   else:                                                           # derivatives
-    if gi <= eval(nh_string):
+    if gi <= eval(nh):
       if dg:
         K = cov.feval(covf, hyp, x[:,mask], None, hi, dg=True)
       else:
@@ -791,7 +791,7 @@ def mask(covf, hyp=None, x=None, z=None, hi=None, dg=None):
         else:
           K = cov.feval(covf, hyp, x[:,mask], z[:,mask], hi)
     else:
-      raise AttributeRrror('Unknown hyperparameter.')
+      raise AttributeError('Unknown hyperparameter.')
 
   return K
 
@@ -1022,7 +1022,7 @@ def feval(fun, hyp=None, x=None, z=None, hi=None, dg=None, d=None, nargout=None)
       if len(fun) < 3:
         raise AttributeError('FITC covariance function must contain pseudo inputs.')
       return f(fun[1], fun[2], hyp, x, z, hi, dg, nargout)
-    elif f == cov.poly:
+    elif f == cov.poly or f == cov.maternIso:
       return f(d, hyp, x, z, hi, dg)
     else:
       return f(hyp, x, z, hi, dg)
