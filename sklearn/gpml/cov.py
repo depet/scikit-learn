@@ -230,6 +230,123 @@ def linOne(hyp=None, x=None, z=None, hi=None, dg=None):
   return K
 
 
+def maternIso(d=None, hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Matern covariance function with nu = d/2 and isotropic distance measure. For
+  d=1 the function is also known as the exponential covariance function or the 
+  Ornstein-Uhlenbeck covariance in 1d. The covariance function is:
+
+    k(x^p,x^q) = s2f * f( sqrt(d)*r ) * exp(-sqrt(d)*r)
+
+  with f(t)=1 for d=1, f(t)=1+t for d=3 and f(t)=1+t+t^2/3 for d=5.
+  Here r is the distance sqrt((x^p-x^q)'*inv(P)*(x^p-x^q)), P is ell times
+  the unit matrix and sf2 is the signal variance. The hyperparameters are:
+
+  hyp = [ log(ell)
+          log(sqrt(sf2)) ]
+  """
+  if x is None:
+    return '2'
+
+  if z is None:
+    z = numpy.array([[]])
+
+  if dg is None:
+    dg = False
+
+  xeqz = numpy.size(z) == 0
+
+  ell = numpy.exp(hyp[0])
+  sf2 = numpy.exp(2*hyp[1])
+
+  if d == 1:
+    f = lambda t: 1
+    df = lambda t: 1
+  elif d == 3:
+    f = lambda t: 1 + t
+    df = lambda t: t
+  elif d == 5:
+    f = lambda t: 1 + t*(1+t/3.)
+    df = lambda t: t*(1+t)/3.
+  else:
+    raise AttributeError('Only 1, 3 and 5 allowed for d.')
+
+  m = lambda t, f: f(t)*exp(-t)
+  dm = lambda t, f: df(t)*t*numpy.exp(-t)
+
+  # precompute distances
+  if dg:                                                           # vector kxx
+    K = numpy.zeros(numpy.size(x,0),1)
+  else:
+    if xeqz:                                             # symmetric matrix Kxx
+      K = numpy.sqrt(util.sq_dist(numpy.sqrt(d)*x.T/ell))
+    else:                                               # cross covariances Kxz
+      K = numpy.sqrt(util.sq_dist(numpy.sqrt(d)*x.T/ell, numpy.sqrt(d)*z.T/ell))
+
+  if hi is None:                                                  # covariances
+    K = sf2*m(K,f)
+  else:                                                           # derivatives
+    if hi == 0:
+      K = sf2*dm(K,f)
+    elif hi == 1:
+      K = 2*sf2*m(K,f)
+    else:
+      AttributeError('Unknown hyperparameter')
+
+  raise K
+
+
+def noise(hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Independent covariance function, ie "white noise", with specified variance.
+  The covariance function is specified as:
+  
+  k(x^p,x^q) = s2 * \delta(p,q)
+  
+  where s2 is the noise variance and \delta(p,q) is a Kronecker delta function
+  which is 1 iff p=q and zero otherwise. Two data points p and q are considered
+  equal if their norm is less than 1e-9. The hyperparameter is
+  
+  hyp = [ log(sqrt(s2)) ]
+  """
+  tol = 1e-9
+
+  # report number of parameters
+  if x is None:
+    return '1'
+
+  if z is None:
+    z = numpy.array([[]])
+
+  xeqz = numpy.size(z) == 0
+  
+  if x.ndim == z.ndim and numpy.shape(x) == numpy.shape(z):
+    xeqz = numpy.linalg.norm(x.T-z.T, numpy.inf)
+  
+  n = numpy.size(x,0)
+  s2 = numpy.exp(2*hyp)  # noise variance
+  
+  # precompute raw
+  if dg:
+    K = numpy.ones((n,1))
+  else:
+    if xeqz:
+      K = numpy.eye(n)
+    else:
+      K = util.sq_dist(x.T,z.T) < tol*tol
+      K = K.astype(float)
+  
+  if hi is None:
+    K = s2*K
+  else:
+    if hi == 0:
+      K = 2*s2*K
+    else:
+      raise AttributeError('Unknown hyperparameter')
+
+  return K
+
+
 def periodic(hyp=None, x=None, z=None, hi=None, dg=None):
   """
   Stationary covariance function for a smooth periodic function, 
@@ -341,7 +458,6 @@ def poly(d=None, hyp=None, x=None, z=None, hi=None, dg=None):
       raise Attributeerror('Unknown hyperparameter')
 
   return K
-
 
 
 def rqIso(hyp=None, x=None, z=None, hi=None, dg=None):
@@ -623,110 +739,59 @@ def seIsoU(hyp=None, x=None, z=None, hi=None, dg=None):
   return K
 
 
-def noise(hyp=None, x=None, z=None, hi=None, dg=None):
-  """
-  Independent covariance function, ie "white noise", with specified variance.
-  The covariance function is specified as:
-  
-  k(x^p,x^q) = s2 * \delta(p,q)
-  
-  where s2 is the noise variance and \delta(p,q) is a Kronecker delta function
-  which is 1 iff p=q and zero otherwise. Two data points p and q are considered
-  equal if their norm is less than 1e-9. The hyperparameter is
-  
-  hyp = [ log(sqrt(s2)) ]
-  """
-  tol = 1e-9
+def add(covf, hyp=None, x=None, z=None, hi=None):
+  raise NotImplementedError()
 
-  # report number of parameters
+
+def mask(covf, hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Apply a covariance function to a subset of the dimensions only. The subset can
+  either be specified by a 0/1 mask by a boolean mask or by an index set.
+
+  This function doesn't actually compute very much on its own, it merely does
+  some bookkeeping, and calls another covariance function to do the actual work.
+  """
+  mask = numpy.fix(meanf[0])             # either a binary mask or an index set
+  covf = covf[1]                             # covariance function to be masked
+  nh = util.feval(covf)      # number of hyperparameters of the full covariance
+
+  if numpy.max(mask) < 2 and numpy.size(mask) > 1:         # convert 1/0->index
+    mask = numpy.nonzero(mask)[0]
+  D = len(mask)                                              # masked dimension
   if x is None:
-    return '1'
+    return str(eval(nh))
 
-  if z is None:
+  if x is None:
+    return '%d' % (eval(nh),)                            # number of parameters
+  if z is None:                                           # make sure, z exists
     z = numpy.array([[]])
 
   xeqz = numpy.size(z) == 0
-  
-  if x.ndim == z.ndim and numpy.shape(x) == numpy.shape(z):
-    xeqz = numpy.linalg.norm(x.T-z.T, numpy.inf)
-  
-  n = numpy.size(x,0)
-  s2 = numpy.exp(2*hyp)  # noise variance
-  
-  # precompute raw
-  if dg:
-    K = numpy.ones((n,1))
-  else:
-    if xeqz:
-      K = numpy.eye(n)
+
+  if D > numpy.size(x,1):
+    raise AttributeError('Size of masked data does not match the dimension of data.')
+  if eval(nh) != numpy.size(hyp):                       # check hyperparameters
+    raise AttributeError('Number of hyperparameters does not match size of masked data.')
+
+  if hi is None:                                                  # covariances
+    if dg:
+      K = cov.feval(covf, hyp, x[:,mask], dg=True)
     else:
-      K = util.sq_dist(x.T,z.T) < tol*tol
-      K = K.astype(float)
-  
-  if hi is None:
-    K = s2*K
-  else:
-    if hi == 0:
-      K = 2*s2*K
+      if xeqz:
+        K = cov.feval(covf, hyp, x[:,mask])
+      else:
+        K = cov.feval(covf, hyp, x[:,mask], z[:,mask])
+  else:                                                           # derivatives
+    if gi <= eval(nh_string):
+      if dg:
+        K = cov.feval(covf, hyp, x[:,mask], None, hi, dg=True)
+      else:
+        if xeqz:
+          K = cov.feval(covf, hyp, x[:,mask], None, hi)
+        else:
+          K = cov.feval(covf, hyp, x[:,mask], z[:,mask], hi)
     else:
-      raise AttributeError('Unknown hyperparameter')
-
-  return K
-
-
-def sum(covf, hyp, x=None, z=None, hi=None, dg=None):
-  """
-  Compose a covariance function as the sum of other covariance
-  functions. This function doesn't actually compute very much on its own, it
-  merely does some bookkeeping, and calls other covariance functions to do the
-  actual work.
-  """
-  if covf is None:
-    raise AttributeError('Covariance functions to be summed must be defined.')
-  else:
-    l = len(covf)
-    if l == 0:
-      raise AttributeError('At least one covariance function to be summed must be defined.')
-
-  # iterate over covariance functions and collect number of hyperparameters
-  j = []
-  for i in range(l):
-    f = covf[i]
-    j.append(feval(f))
-
-  # if there is no data, return number of hyperparameters
-  if x is None:
-    t = j[0]
-    for i in range(1, l):
-      t = t + '+' + j[i]
-    return t
-
-  if z is None:
-    z = z = numpy.array([[]])
-
-  n, D = numpy.shape(x)
-
-  # v vector indicates to which mean parameters belong
-  v = numpy.array([], dtype=numpy.dtype(numpy.int32))
-  for i in range(l):
-    v = numpy.append(v, numpy.tile(i, (eval(j[i]),)))
-
-  if hi is None:
-    K = 0
-    # compute covariance by iteration over summand functions
-    for i in range(l):
-      f = covf[i]
-      # accumulate covariances
-      K = K + feval(f, hyp[v==i], x, z, None, dg)
-  else:
-    # derivative
-    if hi < numpy.size(v):
-      i = v[hi]
-      hj = numpy.sum(v[0:hi]==i)
-      f = covf[i]
-      K = feval(f, hyp[v==i], x, z, hj, dg)
-    else:
-      raise AttributeError('Unknown hyperparameter')
+      raise AttributeRrror('Unknown hyperparameter.')
 
   return K
 
@@ -793,11 +858,6 @@ def prod(covf, hyp=None, x=None, z=None, hi=None, dg=None):
   return K
 
 
-
-
-def add(covf, hyp=None, x=None, z=None, hi=None):
-  raise NotImplementedError()
-
 def scale(covf, hyp=None, x=None, z=None, hi=None):
   """
   Compose a scale function as a scaled version of another one.
@@ -830,55 +890,61 @@ def scale(covf, hyp=None, x=None, z=None, hi=None):
   return K
 
 
-def mask(covf, hyp=None, x=None, z=None, hi=None, dg=None):
+def sum(covf, hyp, x=None, z=None, hi=None, dg=None):
   """
-  Apply a covariance function to a subset of the dimensions only. The subset can
-  either be specified by a 0/1 mask by a boolean mask or by an index set.
-
-  This function doesn't actually compute very much on its own, it merely does
-  some bookkeeping, and calls another covariance function to do the actual work.
+  Compose a covariance function as the sum of other covariance
+  functions. This function doesn't actually compute very much on its own, it
+  merely does some bookkeeping, and calls other covariance functions to do the
+  actual work.
   """
-  mask = numpy.fix(meanf[0])             # either a binary mask or an index set
-  covf = covf[1]                             # covariance function to be masked
-  nh = util.feval(covf)      # number of hyperparameters of the full covariance
+  if covf is None:
+    raise AttributeError('Covariance functions to be summed must be defined.')
+  else:
+    l = len(covf)
+    if l == 0:
+      raise AttributeError('At least one covariance function to be summed must be defined.')
 
-  if numpy.max(mask) < 2 and numpy.size(mask) > 1:         # convert 1/0->index
-    mask = numpy.nonzero(mask)[0]
-  D = len(mask)                                              # masked dimension
+  # iterate over covariance functions and collect number of hyperparameters
+  j = []
+  for i in range(l):
+    f = covf[i]
+    j.append(feval(f))
+
+  # if there is no data, return number of hyperparameters
   if x is None:
-    return str(eval(nh))
+    t = j[0]
+    for i in range(1, l):
+      t = t + '+' + j[i]
+    return t
 
-  if x is None:
-    return '%d' % (eval(nh),)                            # number of parameters
-  if z is None:                                           # make sure, z exists
-    z = numpy.array([[]])
+  if z is None:
+    z = z = numpy.array([[]])
 
-  xeqz = numpy.size(z) == 0
+  n, D = numpy.shape(x)
 
-  if D > numpy.size(x,1):
-    raise AttributeError('Size of masked data does not match the dimension of data.')
-  if eval(nh) != numpy.size(hyp):                       # check hyperparameters
-    raise AttributeError('Number of hyperparameters does not match size of masked data.')
+  # v vector indicates to which mean parameters belong
+  v = numpy.array([], dtype=numpy.dtype(numpy.int32))
+  for i in range(l):
+    v = numpy.append(v, numpy.tile(i, (eval(j[i]),)))
 
-  if hi is None:                                                  # covariances
-    if dg:
-      K = cov.feval(covf, hyp, x[:,mask], dg=True)
+  if hi is None:
+    K = 0
+    # compute covariance by iteration over summand functions
+    for i in range(l):
+      f = covf[i]
+      # accumulate covariances
+      K = K + feval(f, hyp[v==i], x, z, None, dg)
+  else:
+    # derivative
+    if hi < numpy.size(v):
+      i = v[hi]
+      hj = numpy.sum(v[0:hi]==i)
+      f = covf[i]
+      K = feval(f, hyp[v==i], x, z, hj, dg)
     else:
-      if xeqz:
-        K = cov.feval(covf, hyp, x[:,mask])
-      else:
-        K = cov.feval(covf, hyp, x[:,mask], z[:,mask])
-  else:                                                           # derivatives
-    if gi <= eval(nh_string):
-      if dg:
-        K = cov.feval(covf, hyp, x[:,mask], None, hi, dg=True)
-      else:
-        if xeqz:
-          K = cov.feval(covf, hyp, x[:,mask], None, hi)
-        else:
-          K = cov.feval(covf, hyp, x[:,mask], z[:,mask], hi)
-    else:
-      raise AttributeRrror('Unknown hyperparameter.')
+      raise AttributeError('Unknown hyperparameter')
+
+  return K
 
 
 def fitc(covf, xu, hyp=None, x=None, z=None, hi=None, dg=None, nargout=1):
