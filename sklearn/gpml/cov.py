@@ -271,8 +271,8 @@ def maternIso(d=None, hyp=None, x=None, z=None, hi=None, dg=None):
   else:
     raise AttributeError('Only 1, 3 and 5 allowed for d.')
 
-  m = lambda t, f: f(t)*numpy.exp(-t)
-  dm = lambda t, f: df(t)*t*numpy.exp(-t)
+  m = lambda t: f(t)*numpy.exp(-t)
+  dm = lambda t: df(t)*t*numpy.exp(-t)
 
   # precompute distances
   if dg:                                                           # vector kxx
@@ -284,12 +284,12 @@ def maternIso(d=None, hyp=None, x=None, z=None, hi=None, dg=None):
       K = numpy.sqrt(util.sq_dist(numpy.sqrt(d)*x.T/ell, numpy.sqrt(d)*z.T/ell))
 
   if hi is None:                                                  # covariances
-    K = sf2*m(K,f)
+    K = sf2*m(K)
   else:                                                           # derivatives
     if hi == 0:
-      K = sf2*dm(K,f)
+      K = sf2*dm(K)
     elif hi == 1:
-      K = 2*sf2*m(K,f)
+      K = 2*sf2*m(K)
     else:
       AttributeError('Unknown hyperparameter')
 
