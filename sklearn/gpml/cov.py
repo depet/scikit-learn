@@ -296,6 +296,70 @@ def maternIso(d=None, hyp=None, x=None, z=None, hi=None, dg=None):
   return K
 
 
+def nnOne(hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Neural network covariance function with a single parameter for the distance
+  measure. The covariance function is parameterized as:
+
+  k(x^p,x^q) = sf2 * asin(x^p'*P*x^q / sqrt[(1+x^p'*P*x^p)*(1+x^q'*P*x^q)])
+
+  where the x^p and x^q vectors on the right hand side have an added extra bias
+  entry with unit value. P is ell^-2 times the unit matrix and sf2 controls the
+  signal variance. The hyperparameters are:
+
+  hyp = [ log(ell)
+          log(sqrt(sf2) ]
+  """
+  if x is None:
+    return '2'
+
+  if z is None:
+    z = numpy.array([[]])
+
+  if dg is None:
+    dg = False
+
+  xeqz = numpy.size(z) == 0
+
+  n = numpy.size(x,0)
+  ell2 = numpy.exp(2*hyp[0])
+  sf2 = numpy.exp(2*hyp[1])
+
+  sx = 1 + numpy.sum(x*x,1)
+  if dg:                                                           # vector kxx
+    K = sx/(sx+ell2)
+  else:
+    if xeqz:                                             # symmetric matrix Kxx
+      S = 1 + x*x.T
+      K = S/numpy.dot(numpy.sqrt(ell2+sx),numpy.sqrt(ell2+sx).T)
+    else:                                               # cross covariances Kxz
+      S = 1 + numpy.dot(x,z.T)
+      sz = 1 + numpy.sum(z*z,1)
+      K = S/numpy.dot(numpy.sqrt(ell2+sx),numpy.sqrt(ell2+sz).T)
+
+  if hi is None:                                                  # covariances
+    K = sf2*numpy.arcsin(K)
+  else:                                                           # derivatives
+    if hi == 0:                                                   # lengthscale
+      if dg:
+        V = K
+      else:
+        vx = sx/(ell2+sx)
+        if xeqz:
+          V = numpy.tile(vx/2,(1,n)) + numpy.tile(vx.T/2,(n,1))
+        else:
+          vz = sz/(ell2+sz)
+          nz = numpy.size(z,0)
+          V = numpy.tile(vx/2,(1,nz)) + numpy.tile(vz.T/2,(n,1))
+      K = -2*sf2*(K-K*V)/numpy.sqrt(1-K*K)
+    elif hi == 1:                                                   # magnitude
+      K = 2*sf2*numpy.arcsin(K)
+    else:
+      raise AttributeError('Unknown hyperparameter.')
+
+  return K
+
+
 def noise(hyp=None, x=None, z=None, hi=None, dg=None):
   """
   Independent covariance function, ie "white noise", with specified variance.
