@@ -44,6 +44,49 @@ import numpy.matlib
 from . import util
 
 
+def const(hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Covariance function for a constant function. The covariance function is
+  parameterized as:
+
+  k(x^p,x^q) = s2;
+
+  The scalar hyperparameter is:
+
+  hyp = [ log(sqrt(s2)) ]
+  """
+  #report number of parameters
+  if x is None:
+    return '1'
+
+  if z is None:
+    z = numpy.array([[]])
+
+  if dg is None:
+    dg = False
+
+  xeqz = numpy.size(z) == 0
+
+  s2 = numpy.exp(2*hyp)
+  n = numpy.size(x,0)
+
+  if gd:                                                           # vector kxx
+    K = s2*numpy.ones((n,1))
+  else:
+    if xeqz:                                             # symmetric matrix Kxx
+      K = s2*numpy.ones((n,n))
+    else:                                               # cross covariances Kxz
+      K = s2*numpy.ones((m,numpy.size(z,0)))
+
+  if hi is not None:                                              # derivatives
+    if hi == 0:
+      K = 2*K
+    else:
+      raise AttributeError('Unknown hyperparameter')
+
+  return K
+
+
 def lin(hyp=None, x=None, z=None, hi=None, dg=None):
   """
   Linear covariance function. The covariance function is parameterized as:
@@ -187,6 +230,187 @@ def linOne(hyp=None, x=None, z=None, hi=None, dg=None):
   return K
 
 
+def maternIso(d=None, hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Matern covariance function with nu = d/2 and isotropic distance measure. For
+  d=1 the function is also known as the exponential covariance function or the 
+  Ornstein-Uhlenbeck covariance in 1d. The covariance function is:
+
+    k(x^p,x^q) = s2f * f( sqrt(d)*r ) * exp(-sqrt(d)*r)
+
+  with f(t)=1 for d=1, f(t)=1+t for d=3 and f(t)=1+t+t^2/3 for d=5.
+  Here r is the distance sqrt((x^p-x^q)'*inv(P)*(x^p-x^q)), P is ell times
+  the unit matrix and sf2 is the signal variance. The hyperparameters are:
+
+  hyp = [ log(ell)
+          log(sqrt(sf2)) ]
+  """
+  if x is None:
+    return '2'
+
+  if z is None:
+    z = numpy.array([[]])
+
+  if dg is None:
+    dg = False
+
+  xeqz = numpy.size(z) == 0
+
+  ell = numpy.exp(hyp[0])
+  sf2 = numpy.exp(2*hyp[1])
+
+  if d == 1:
+    f = lambda t: 1
+    df = lambda t: 1
+  elif d == 3:
+    f = lambda t: 1 + t
+    df = lambda t: t
+  elif d == 5:
+    f = lambda t: 1 + t*(1+t/3.)
+    df = lambda t: t*(1+t)/3.
+  else:
+    raise AttributeError('Only 1, 3 and 5 allowed for d.')
+
+  m = lambda t: f(t)*numpy.exp(-t)
+  dm = lambda t: df(t)*t*numpy.exp(-t)
+
+  # precompute distances
+  if dg:                                                           # vector kxx
+    K = numpy.zeros((numpy.size(x,0),1))
+  else:
+    if xeqz:                                             # symmetric matrix Kxx
+      K = numpy.sqrt(util.sq_dist(numpy.sqrt(d)*x.T/ell))
+    else:                                               # cross covariances Kxz
+      K = numpy.sqrt(util.sq_dist(numpy.sqrt(d)*x.T/ell, numpy.sqrt(d)*z.T/ell))
+
+  if hi is None:                                                  # covariances
+    K = sf2*m(K)
+  else:                                                           # derivatives
+    if hi == 0:
+      K = sf2*dm(K)
+    elif hi == 1:
+      K = 2*sf2*m(K)
+    else:
+      AttributeError('Unknown hyperparameter')
+
+  return K
+
+
+def nnOne(hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Neural network covariance function with a single parameter for the distance
+  measure. The covariance function is parameterized as:
+
+  k(x^p,x^q) = sf2 * asin(x^p'*P*x^q / sqrt[(1+x^p'*P*x^p)*(1+x^q'*P*x^q)])
+
+  where the x^p and x^q vectors on the right hand side have an added extra bias
+  entry with unit value. P is ell^-2 times the unit matrix and sf2 controls the
+  signal variance. The hyperparameters are:
+
+  hyp = [ log(ell)
+          log(sqrt(sf2) ]
+  """
+  if x is None:
+    return '2'
+
+  if z is None:
+    z = numpy.array([[]])
+
+  if dg is None:
+    dg = False
+
+  xeqz = numpy.size(z) == 0
+
+  n = numpy.size(x,0)
+  ell2 = numpy.exp(2*hyp[0])
+  sf2 = numpy.exp(2*hyp[1])
+
+  sx = 1 + numpy.sum(x*x,1)
+  if dg:                                                           # vector kxx
+    K = sx/(sx+ell2)
+  else:
+    if xeqz:                                             # symmetric matrix Kxx
+      S = 1 + x*x.T
+      K = S/numpy.dot(numpy.sqrt(ell2+sx),numpy.sqrt(ell2+sx).T)
+    else:                                               # cross covariances Kxz
+      S = 1 + numpy.dot(x,z.T)
+      sz = 1 + numpy.sum(z*z,1)
+      K = S/numpy.dot(numpy.sqrt(ell2+sx),numpy.sqrt(ell2+sz).T)
+
+  if hi is None:                                                  # covariances
+    K = sf2*numpy.arcsin(K)
+  else:                                                           # derivatives
+    if hi == 0:                                                   # lengthscale
+      if dg:
+        V = K
+      else:
+        vx = sx/(ell2+sx)
+        if xeqz:
+          V = numpy.tile(vx/2,(1,n)) + numpy.tile(vx.T/2,(n,1))
+        else:
+          vz = sz/(ell2+sz)
+          nz = numpy.size(z,0)
+          V = numpy.tile(vx/2,(1,nz)) + numpy.tile(vz.T/2,(n,1))
+      K = -2*sf2*(K-K*V)/numpy.sqrt(1-K*K)
+    elif hi == 1:                                                   # magnitude
+      K = 2*sf2*numpy.arcsin(K)
+    else:
+      raise AttributeError('Unknown hyperparameter.')
+
+  return K
+
+
+def noise(hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Independent covariance function, ie "white noise", with specified variance.
+  The covariance function is specified as:
+  
+  k(x^p,x^q) = s2 * \delta(p,q)
+  
+  where s2 is the noise variance and \delta(p,q) is a Kronecker delta function
+  which is 1 iff p=q and zero otherwise. Two data points p and q are considered
+  equal if their norm is less than 1e-9. The hyperparameter is
+  
+  hyp = [ log(sqrt(s2)) ]
+  """
+  tol = 1e-9
+
+  # report number of parameters
+  if x is None:
+    return '1'
+
+  if z is None:
+    z = numpy.array([[]])
+
+  xeqz = numpy.size(z) == 0
+  
+  if x.ndim == z.ndim and numpy.shape(x) == numpy.shape(z):
+    xeqz = numpy.linalg.norm(x.T-z.T, numpy.inf)
+  
+  n = numpy.size(x,0)
+  s2 = numpy.exp(2*hyp)  # noise variance
+  
+  # precompute raw
+  if dg:
+    K = numpy.ones((n,1))
+  else:
+    if xeqz:
+      K = numpy.eye(n)
+    else:
+      K = util.sq_dist(x.T,z.T) < tol*tol
+      K = K.astype(float)
+  
+  if hi is None:
+    K = s2*K
+  else:
+    if hi == 0:
+      K = 2*s2*K
+    else:
+      raise AttributeError('Unknown hyperparameter')
+
+  return K
+
+
 def periodic(hyp=None, x=None, z=None, hi=None, dg=None):
   """
   Stationary covariance function for a smooth periodic function, 
@@ -245,6 +469,129 @@ def periodic(hyp=None, x=None, z=None, hi=None, dg=None):
       K = 2*sf2*numpy.exp(-2*K)
     else:
       raise AttributeError('Unknown hyperparameter')
+
+  return K
+
+
+def poly(d=None, hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Polynomial covariance function. The covariance function is parameterized as:
+
+  k(x^p,x^q) = sf^2 * ( c + (x^p)'*(x^q) )^d 
+
+  The hyperparameters are:
+
+  hyp = [ log(c)
+          log(sf)  ]
+  """
+  #report number of parameters
+  if x is None:
+    return '2'
+  
+  if z is None:
+    z = numpy.array([[]])
+    
+  if dg is None:
+    dg = False
+  
+  xeqz = numpy.size(z) == 0
+
+  c = numpy.exp(hyp[0])                                  # inhomogeneous offset
+  sf2 = numpy.exp(2*hyp[1])                                   # signal variance
+
+  if d != max(1,numpy.fix(d)):                                         # degree
+    raise AttributeError('Only nonzero integers allowed for d.')
+  
+  # precompute inner products
+  if dg:                                                           # vector kxx
+    K = numpy.sum(x*x,1)
+  else:
+    if xeqz:                                             # symmetric matrix Kxx
+      K = numpy.dot(x,x.T)
+    else:                                               # cross covariances Kxz
+      K = numpy.dot(x,z.T)
+
+  if hi is None:                                                  # covariances
+    K = sf2*(c+K)**d
+  else:                                                           # derivatives
+    if i == 0:
+      K = c*d*sf2*(c+K)**(d-1)
+    elif i == 1:
+      K = 2*sf2*(c+K)**d
+    else:
+      raise Attributeerror('Unknown hyperparameter')
+
+  return K
+
+
+def ppIso(v=None, hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Piecewise polynomial covariance function with compact support, v = 0,1,2,3.
+  The covariance functions are 2v times continuous differentiable and the 
+  corresponding processes are hence v times mean-square differentiable. The 
+  covariance function is:
+
+  k(x^p,x^q) = s2f * (1-r)_+.^j * f(r,j)
+
+  where r is the distance sqrt((x^p-x^q)'*inv(P)*(x^p-x^q)), P is ell^2 times
+  the unit matrix and sf2 is the signal variance. The hyperparameters are:
+
+  hyp = [ log(ell)
+          log(sqrt(sf2)) ]
+  """
+  #report number of parameters
+  if x is None:
+    return '2'
+  
+  if z is None:
+    z = numpy.array([[]])
+    
+  if dg is None:
+    dg = False
+  
+  xeqz = numpy.size(z) == 0
+
+  ell = numpy.exp(hyp[0])
+  sf2 = numpy.exp(2*hyp[1])
+
+  j = numpy.floor(numpy.size(x,1)/2.)+v+1                            # exponent
+
+  if v == 0:
+    f = lambda r, j: 1
+    df = lambda r, j: 0
+  elif v == 1:
+    f = lambda r, j: 1+(j+1)*r
+    df = lambda r, j: j+1
+  elif v == 2:
+    f = lambda r, j: 1+(j+2)*r+(j**2+4*j+3)/3*r**2
+    df = lambda r, j: j+2+2*(j**2+4*j+3)/3*r
+  elif v == 3:
+    f = lambda r, j: 1+(j+3)*r+(6*j**2+36*j+45)/15*r**2+(j**3+9*j**2+23*j+15)/15*r**3
+    df = lambda r, j: (j+3)+2*(6*j**2+36*j+45)/15*r+(j**3+9*j**2+23*j+15)/5*r**2
+  else:
+    raise AttributeError('Only 0,1,2 and 3 allowed for v.')
+
+  pp = lambda r, j, v: numpy.maximum(1-r,0)**(j+v)*f(r,j)
+  dpp = lambda r, j, v: numpy.maximum(1-r,0)**(j+v-1)*r*((j+v)*f(r,j)-numpy.maximum(1-r,0)*df(r,j))
+
+  # precompute squared distances
+  if dg:                                                           # vector kxx
+    K = numpy.zeros((numpy.size(x,0),1))
+  else:
+    if xeqz:                                             # symmetric matrix Kxx
+      K = numpy.sqrt(util.sq_dist(x.T/ell))
+    else:                                               # cross covariances Kxz
+      K = numpy.sqrt(util.sq_dist(x.T/ell,z.T/ell))
+
+  if hi is None:                                                  # covariances
+    K = sf2*pp(K, j, v)
+  else:                                                           # derivatives
+    if hi == 0:
+      K = sf2*dpp(K, j, v)
+    elif hi == 1:
+      K = 2*sf2*pp(K, j, v)
+    else:
+      raise AttributeError('Unknown hyperparameter.')
 
   return K
 
@@ -346,7 +693,7 @@ def rqArd(hyp=None, x=None, z=None, hi=None, dg=None):
     D2 = numpy.zeros((numpy.size(x,0),1))
   else:
     if xeqz:                                             # symmetric matrix Kxx
-      D2 = util.sq_dist(numpy.dot(numpy.diagflat(1./ell),x.T)
+      D2 = util.sq_dist(numpy.dot(numpy.diagflat(1./ell),x.T))
     else:                                               # cross covariances Kxz
       D2 = util.sq_dist(numpy.dot(numpy.diagflat(1./ell),x.T), numpy.dot(numpy.diagflat(1./ell),z.T))
 
@@ -358,7 +705,7 @@ def rqArd(hyp=None, x=None, z=None, hi=None, dg=None):
         K = D2*0
       else:
         if xeqz:
-          K = sf2*numpy.power(1+0.5*D2/alpha, -alpha-1)*util.sq_dist(x[:,[i].T/ell[i])
+          K = sf2*numpy.power(1+0.5*D2/alpha, -alpha-1)*util.sq_dist(x[:,[i]].T/ell[i])
         else:
           K = sf2*numpy.power(1+0.5*D2/alpha, -alpha-1)*util.sq_dist(x[:,[i]].T/ell[i], z[:,[i]].T/ell[i])
     elif hi == D:                                         # magnitude parameter
@@ -397,8 +744,8 @@ def seArd(hyp=None, x=None, z=None, hi=None, dg=None):
 
   n, D = numpy.shape(x)
   
-  ell = numpy.exp(hyp[0:D])      # characteristic length scale
-  sf2 = numpy.exp(2*hyp[D])        # signal variance
+  ell = numpy.exp(hyp[0:D])                       # characteristic length scale
+  sf2 = numpy.exp(2*hyp[D])                                   # signal variance
 
   # precompute squared distances
   if dg:
@@ -455,8 +802,8 @@ def seIso(hyp=None, x=None, z=None, hi=None, dg=None):
 
   n, D = numpy.shape(x)
   
-  ell = numpy.exp(hyp[0])      # characteristic length scale
-  sf2 = numpy.exp(2*hyp[1])        # signal variance
+  ell = numpy.exp(hyp[0])                         # characteristic length scale
+  sf2 = numpy.exp(2*hyp[1])                                   # signal variance
 
   # precompute squared distances
   if dg:
@@ -506,7 +853,7 @@ def seIsoU(hyp=None, x=None, z=None, hi=None, dg=None):
 
   n, D = numpy.shape(x)
   
-  ell = numpy.exp(hyp[0])      # characteristic length scale
+  ell = numpy.exp(hyp[0])                         # characteristic length scale
 
   # precompute squared distances
   if dg:
@@ -528,110 +875,59 @@ def seIsoU(hyp=None, x=None, z=None, hi=None, dg=None):
   return K
 
 
-def noise(hyp=None, x=None, z=None, hi=None, dg=None):
-  """
-  Independent covariance function, ie "white noise", with specified variance.
-  The covariance function is specified as:
-  
-  k(x^p,x^q) = s2 * \delta(p,q)
-  
-  where s2 is the noise variance and \delta(p,q) is a Kronecker delta function
-  which is 1 iff p=q and zero otherwise. Two data points p and q are considered
-  equal if their norm is less than 1e-9. The hyperparameter is
-  
-  hyp = [ log(sqrt(s2)) ]
-  """
-  tol = 1e-9
+def add(covf, hyp=None, x=None, z=None, hi=None):
+  raise NotImplementedError()
 
-  # report number of parameters
+
+def mask(covf, hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Apply a covariance function to a subset of the dimensions only. The subset can
+  either be specified by a 0/1 mask by a boolean mask or by an index set.
+
+  This function doesn't actually compute very much on its own, it merely does
+  some bookkeeping, and calls another covariance function to do the actual work.
+  """
+  mask = numpy.fix(meanf[0])             # either a binary mask or an index set
+  covf = covf[1]                             # covariance function to be masked
+  nh = util.feval(covf)      # number of hyperparameters of the full covariance
+
+  if numpy.max(mask) < 2 and numpy.size(mask) > 1:         # convert 1/0->index
+    mask = numpy.nonzero(mask)[0]
+  D = len(mask)                                              # masked dimension
   if x is None:
-    return '1'
+    return str(eval(nh))
 
-  if z is None:
+  if x is None:
+    return '%d' % (eval(nh),)                            # number of parameters
+  if z is None:                                           # make sure, z exists
     z = numpy.array([[]])
 
   xeqz = numpy.size(z) == 0
-  
-  if x.ndim == z.ndim and numpy.shape(x) == numpy.shape(z):
-    xeqz = numpy.linalg.norm(x.T-z.T, numpy.inf)
-  
-  n = numpy.size(x,0)
-  s2 = numpy.exp(2*hyp)  # noise variance
-  
-  # precompute raw
-  if dg:
-    K = numpy.ones((n,1))
-  else:
-    if xeqz:
-      K = numpy.eye(n)
+
+  if D > numpy.size(x,1):
+    raise AttributeError('Size of masked data does not match the dimension of data.')
+  if eval(nh) != numpy.size(hyp):                       # check hyperparameters
+    raise AttributeError('Number of hyperparameters does not match size of masked data.')
+
+  if hi is None:                                                  # covariances
+    if dg:
+      K = cov.feval(covf, hyp, x[:,mask], dg=True)
     else:
-      K = util.sq_dist(x.T,z.T) < tol*tol
-      K = K.astype(float)
-  
-  if hi is None:
-    K = s2*K
-  else:
-    if hi == 0:
-      K = 2*s2*K
+      if xeqz:
+        K = cov.feval(covf, hyp, x[:,mask])
+      else:
+        K = cov.feval(covf, hyp, x[:,mask], z[:,mask])
+  else:                                                           # derivatives
+    if gi <= eval(nh):
+      if dg:
+        K = cov.feval(covf, hyp, x[:,mask], None, hi, dg=True)
+      else:
+        if xeqz:
+          K = cov.feval(covf, hyp, x[:,mask], None, hi)
+        else:
+          K = cov.feval(covf, hyp, x[:,mask], z[:,mask], hi)
     else:
-      raise AttributeError('Unknown hyperparameter')
-
-  return K
-
-
-def sum(covf, hyp, x=None, z=None, hi=None, dg=None):
-  """
-  Compose a covariance function as the sum of other covariance
-  functions. This function doesn't actually compute very much on its own, it
-  merely does some bookkeeping, and calls other covariance functions to do the
-  actual work.
-  """
-  if covf is None:
-    raise AttributeError('Covariance functions to be summed must be defined.')
-  else:
-    l = len(covf)
-    if l == 0:
-      raise AttributeError('At least one covariance function to be summed must be defined.')
-
-  # iterate over covariance functions and collect number of hyperparameters
-  j = []
-  for i in range(l):
-    f = covf[i]
-    j.append(feval(f))
-
-  # if there is no data, return number of hyperparameters
-  if x is None:
-    t = j[0]
-    for i in range(1, l):
-      t = t + '+' + j[i]
-    return t
-
-  if z is None:
-    z = z = numpy.array([[]])
-
-  n, D = numpy.shape(x)
-
-  # v vector indicates to which mean parameters belong
-  v = numpy.array([], dtype=numpy.dtype(numpy.int32))
-  for i in range(l):
-    v = numpy.append(v, numpy.tile(i, (eval(j[i]),)))
-
-  if hi is None:
-    K = 0
-    # compute covariance by iteration over summand functions
-    for i in range(l):
-      f = covf[i]
-      # accumulate covariances
-      K = K + feval(f, hyp[v==i], x, z, None, dg)
-  else:
-    # derivative
-    if hi < numpy.size(v):
-      i = v[hi]
-      hj = numpy.sum(v[0:hi]==i)
-      f = covf[i]
-      K = feval(f, hyp[v==i], x, z, hj, dg)
-    else:
-      raise AttributeError('Unknown hyperparameter')
+      raise AttributeError('Unknown hyperparameter.')
 
   return K
 
@@ -698,18 +994,93 @@ def prod(covf, hyp=None, x=None, z=None, hi=None, dg=None):
   return K
 
 
-
-
-def add(covf, hyp=None, x=None, z=None, hi=None):
-  raise NotImplementedError()
-
 def scale(covf, hyp=None, x=None, z=None, hi=None):
-  raise NotImplementedError()
+  """
+  Compose a scale function as a scaled version of another one.
 
-def mask(covf, hyp=None, x=None, z=None, hi=None):
-  raise NotImplementedError()
+  k(x^p,x^q) = sf^2 * k_0(x^p,x^q)
+
+  The hyperparameter is:
+
+  hyp = [ log(sf)  ]
+
+  This function doesn't actually compute very much on its own, it merely does
+  some bookkeeping, and calls other mean function to do the actual work.
+  """
+  if x is None:
+    return cov.feval(covf) + '+1'
+  if z is None:                                           # make sure, z exists
+    z = numpy.array([[]])
+
+  n, D = numpy.shape(x)
+  sf2 = numpy.exp(2*hyp[0])                                   # signal variance
+
+  if hi is None:                                                  # covariances
+    K = sf2*cov.feval(covf,hyp[1:],x,z)
+  else:                                                           # derivatives
+    if hi == 0:
+      K = 2*sf2*cov.feval(covf,hyp[1:],x,z)
+    else:
+      K = sf2*cov.feval(covf,hyp[1:],x,z,i-1)
+
+  return K
 
 
+def sum(covf, hyp, x=None, z=None, hi=None, dg=None):
+  """
+  Compose a covariance function as the sum of other covariance
+  functions. This function doesn't actually compute very much on its own, it
+  merely does some bookkeeping, and calls other covariance functions to do the
+  actual work.
+  """
+  if covf is None:
+    raise AttributeError('Covariance functions to be summed must be defined.')
+  else:
+    l = len(covf)
+    if l == 0:
+      raise AttributeError('At least one covariance function to be summed must be defined.')
+
+  # iterate over covariance functions and collect number of hyperparameters
+  j = []
+  for i in range(l):
+    f = covf[i]
+    j.append(feval(f))
+
+  # if there is no data, return number of hyperparameters
+  if x is None:
+    t = j[0]
+    for i in range(1, l):
+      t = t + '+' + j[i]
+    return t
+
+  if z is None:
+    z = z = numpy.array([[]])
+
+  n, D = numpy.shape(x)
+
+  # v vector indicates to which mean parameters belong
+  v = numpy.array([], dtype=numpy.dtype(numpy.int32))
+  for i in range(l):
+    v = numpy.append(v, numpy.tile(i, (eval(j[i]),)))
+
+  if hi is None:
+    K = 0
+    # compute covariance by iteration over summand functions
+    for i in range(l):
+      f = covf[i]
+      # accumulate covariances
+      K = K + feval(f, hyp[v==i], x, z, None, dg)
+  else:
+    # derivative
+    if hi < numpy.size(v):
+      i = v[hi]
+      hj = numpy.sum(v[0:hi]==i)
+      f = covf[i]
+      K = feval(f, hyp[v==i], x, z, hj, dg)
+    else:
+      raise AttributeError('Unknown hyperparameter')
+
+  return K
 
 
 def fitc(covf, xu, hyp=None, x=None, z=None, hi=None, dg=None, nargout=1):
@@ -772,8 +1143,7 @@ def fitc(covf, xu, hyp=None, x=None, z=None, hi=None, dg=None, nargout=1):
         return feval(covf,hyp,xu,z,hi)
 
 
-
-def feval(fun, hyp=None, x=None, z=None, hi=None, dg=None, nargout=None):
+def feval(fun, hyp=None, x=None, z=None, hi=None, dg=None, d=None, nargout=None):
   """
   Evaluates covariance functions.
   """
@@ -788,8 +1158,8 @@ def feval(fun, hyp=None, x=None, z=None, hi=None, dg=None, nargout=None):
       if len(fun) < 3:
         raise AttributeError('FITC covariance function must contain pseudo inputs.')
       return f(fun[1], fun[2], hyp, x, z, hi, dg, nargout)
-    #f == cov.maternIso or f == cov.poly or f == cov.ppIso:
-    #  ...
+    elif f == cov.poly or f == cov.maternIso:
+      return f(d, hyp, x, z, hi, dg)
     else:
       return f(hyp, x, z, hi, dg)
   else:
