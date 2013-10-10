@@ -512,14 +512,86 @@ def poly(d=None, hyp=None, x=None, z=None, hi=None, dg=None):
       K = numpy.dot(x,z.T)
 
   if hi is None:                                                  # covariances
-    K = sf2*numpy.power(c+K,d)
+    K = sf2*(c+K)**d
   else:                                                           # derivatives
     if i == 0:
-      K = c*d*sf2*numpy.power(c+K,d-1)
+      K = c*d*sf2*(c+K)**(d-1)
     elif i == 1:
-      K = 2*sf2*numpy.power(c+K,d)
+      K = 2*sf2*(c+K)**d
     else:
       raise Attributeerror('Unknown hyperparameter')
+
+  return K
+
+
+def ppIso(v=None, hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Piecewise polynomial covariance function with compact support, v = 0,1,2,3.
+  The covariance functions are 2v times continuous differentiable and the 
+  corresponding processes are hence v times mean-square differentiable. The 
+  covariance function is:
+
+  k(x^p,x^q) = s2f * (1-r)_+.^j * f(r,j)
+
+  where r is the distance sqrt((x^p-x^q)'*inv(P)*(x^p-x^q)), P is ell^2 times
+  the unit matrix and sf2 is the signal variance. The hyperparameters are:
+
+  hyp = [ log(ell)
+          log(sqrt(sf2)) ]
+  """
+  #report number of parameters
+  if x is None:
+    return '2'
+  
+  if z is None:
+    z = numpy.array([[]])
+    
+  if dg is None:
+    dg = False
+  
+  xeqz = numpy.size(z) == 0
+
+  ell = numpy.exp(hyp[0])
+  sf2 = numpy.exp(2*hyp[1])
+
+  j = numpy.floor(numpy.size(x,1)/2.)+v+1                            # exponent
+
+  if v == 0:
+    f = lambda r, j: 1
+    df = lambda r, j: 0
+  elif v == 1:
+    f = lambda r, j: 1+(j+1)*r
+    df = lambda r, j: j+1
+  elif v == 2:
+    f = lambda r, j: 1+(j+2)*r+(j**2+4*j+3)/3*r**2
+    df = lambda r, j: j+2+2*(j**2+4*j+3)/3*r
+  elif v == 3:
+    f = lambda r, j: 1+(j+3)*r+(6*j**2+36*j+45)/15*r**2+(j**3+9*j**2+23*j+15)/15*r**3
+    df = lambda r, j: (j+3)+2*(6*j**2+36*j+45)/15*r+(j**3+9*j**2+23*j+15)/5*r**2
+  else:
+    raise AttributeError('Only 0,1,2 and 3 allowed for v.')
+
+  pp = lambda r, j, v: numpy.maximum(1-r,0)**(j+v)*f(r,j)
+  dpp = lambda r, j, v: numpy.maximum(1-r,0)**(j+v-1)*r*((j+v)*f(r,j)-numpy.maximum(1-r,0)*df(r,j))
+
+  # precompute squared distances
+  if dg:                                                           # vector kxx
+    K = numpy.zeros((numpy.size(x,0),1))
+  else:
+    if xeqz:                                             # symmetric matrix Kxx
+      K = numpy.sqrt(util.sq_dist(x.T/ell))
+    else:                                               # cross covariances Kxz
+      K = numpy.sqrt(util.sq_dist(x.T/ell,z.T/ell))
+
+  if hi is None:                                                  # covariances
+    K = sf2*pp(K, j, v)
+  else:                                                           # derivatives
+    if hi == 0:
+      K = sf2*dpp(K, j, v)
+    elif hi == 1:
+      K = 2*sf2*pp(K, j, v)
+    else:
+      raise AttributeError('Unknown hyperparameter.')
 
   return K
 
@@ -672,8 +744,8 @@ def seArd(hyp=None, x=None, z=None, hi=None, dg=None):
 
   n, D = numpy.shape(x)
   
-  ell = numpy.exp(hyp[0:D])      # characteristic length scale
-  sf2 = numpy.exp(2*hyp[D])        # signal variance
+  ell = numpy.exp(hyp[0:D])                       # characteristic length scale
+  sf2 = numpy.exp(2*hyp[D])                                   # signal variance
 
   # precompute squared distances
   if dg:
@@ -730,8 +802,8 @@ def seIso(hyp=None, x=None, z=None, hi=None, dg=None):
 
   n, D = numpy.shape(x)
   
-  ell = numpy.exp(hyp[0])      # characteristic length scale
-  sf2 = numpy.exp(2*hyp[1])        # signal variance
+  ell = numpy.exp(hyp[0])                         # characteristic length scale
+  sf2 = numpy.exp(2*hyp[1])                                   # signal variance
 
   # precompute squared distances
   if dg:
@@ -781,7 +853,7 @@ def seIsoU(hyp=None, x=None, z=None, hi=None, dg=None):
 
   n, D = numpy.shape(x)
   
-  ell = numpy.exp(hyp[0])      # characteristic length scale
+  ell = numpy.exp(hyp[0])                         # characteristic length scale
 
   # precompute squared distances
   if dg:
