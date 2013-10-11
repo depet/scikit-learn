@@ -637,15 +637,15 @@ def rqIso(hyp=None, x=None, z=None, hi=None, dg=None):
       D2 = util.sq_dist(x.T/ell,z.T/ell)
 
   if hi is None:
-    K = sf2*numpy.power(1+0.5*D2/alpha,-alpha)
+    K = sf2*(1+0.5*D2/alpha)**(-alpha)
   else:
     if hi == 0:
-      K = sf2*numpy.power(1+0.5*D2/alpha,-alpha-1)*D2
+      K = sf2*(1+0.5*D2/alpha)**(-alpha-1)*D2
     elif hi == 1:
-      K = 2*sf2*numpy.power(1+0.5*D2/alpha,-alpha)
+      K = 2*sf2*(1+0.5*D2/alpha)**(-alpha)
     elif hi == 2:
       K = 1+0.5*D2/alpha
-      K = sf2*numpy.power(K,-alpha)*(0.5*D2/K - alpha*numpy.log(K))
+      K = sf2*(K)**(-alpha)*(0.5*D2/K - alpha*numpy.log(K))
     else:
       raise AttributeError('Unknown hyperparameter')
 
@@ -698,21 +698,21 @@ def rqArd(hyp=None, x=None, z=None, hi=None, dg=None):
       D2 = util.sq_dist(numpy.dot(numpy.diagflat(1./ell),x.T), numpy.dot(numpy.diagflat(1./ell),z.T))
 
   if hi is None:                                                  # covariances
-    K = sf2*numpy.power(1+0.5*D2/alpha, -alpha)
+    K = sf2*(1+0.5*D2/alpha)**(-alpha)
   else:                                                           # derivatives
     if hi >= 0 and hi < D:                             # length scale parameter
       if dg:
         K = D2*0
       else:
         if xeqz:
-          K = sf2*numpy.power(1+0.5*D2/alpha, -alpha-1)*util.sq_dist(x[:,[i]].T/ell[i])
+          K = sf2*(1+0.5*D2/alpha)**(-alpha-1)*util.sq_dist(x[:,[i]].T/ell[i])
         else:
-          K = sf2*numpy.power(1+0.5*D2/alpha, -alpha-1)*util.sq_dist(x[:,[i]].T/ell[i], z[:,[i]].T/ell[i])
+          K = sf2*(1+0.5*D2/alpha)**(-alpha-1)*util.sq_dist(x[:,[i]].T/ell[i], z[:,[i]].T/ell[i])
     elif hi == D:                                         # magnitude parameter
-      K = 2*sf2*numpy.power(1+0.5*D2/alpha, -alpha)
+      K = 2*sf2*(1+0.5*D2/alpha)**(-alpha)
     elif hi == D+1:
       K = 1+0.5*D2/alpha
-      K = sf2*numpy.power(K, -alpha)*(0.5*D2/K-numpy.dot(alpha,numpy.log(K)))
+      K = sf2*(K)**(-alpha)*(0.5*D2/K-numpy.dot(alpha,numpy.log(K)))
     else:
       raise AttributeError('Unknown hyperparameter')
 
@@ -875,8 +875,143 @@ def seIsoU(hyp=None, x=None, z=None, hi=None, dg=None):
   return K
 
 
-def add(covf, hyp=None, x=None, z=None, hi=None):
-  raise NotImplementedError()
+def add(covf, hyp=None, x=None, z=None, hi=None, dg=None):
+  """
+  Additive covariance function using a 1d base covariance function 
+  cov(x^p,x^q;hyp) with individual hyperparameters hyp.
+
+  k(x^p,x^q) = \sum_{r \in R} sf_r \sum_{|I|=r}
+                  \prod_{i \in I} cov(x^p_i,x^q_i;hyp_i)
+
+  hyp = [ hyp_1
+          hyp_2
+           ...
+          hyp_D 
+          log(sf_R(1))
+           ...
+          log(sf_R(end)) ]
+
+  where hyp_d are the parameters of the 1d covariance function which are shared
+  over the different values of R(1) to R(end).
+
+  Please see the paper Additive Gaussian Processes by Duvenaud, Nickisch and 
+  Rasmussen, NIPS, 2011 for details.
+  """
+  R = covf[0]
+  nh = eval(feval(covf[1]))        # number of hypers per individual covariance
+  nr = numpy.size(R)               # number of different degrees of interaction
+
+  if x is None:                             # report number of hyper parameters
+    return 'D*%d+%d' % (nh, nr)
+
+  if z is None:                                           # make sure, z exists
+    z = numpy.array([[]])
+
+  if dg is None:
+    dg = False
+
+  xeqz = numpy.size(z) == 0
+
+  n, D = numpy.shape(x)                                        # dimensionality
+  sf2 = numpy.exp(2*hyp[D*nh+numpy.arange(nr)])     # sig. var. of ind. degrees
+
+  Kd = __Kdim(covf[1], hyp, x, z, dg)    # evaluate dimensionwise covariances K
+  if hi is None:                                                  # covariances
+    EE = __elsympol(Kd, max(R))          # Rth elementary symmetric polynomials
+    K = 0
+    for ii in range(nr):                                     # sf2 weighted sum
+      K = K + sf2[ii]*EE[:,:,R[ii]]
+  else:                                                           # derivatives
+    if hi < D*nh:                   # individual covariance function parameters
+      j = int(numpy.fix(hi/nh))      # j is the dimension of the hyperparameter
+      if dg:
+        dgj = True
+        zj = None
+      else:
+        dgj = None
+        if xeqz:
+          zj = None
+        else:
+          zj = z[:,[j]]
+      # other dK=0
+      dKj = feval(covf[1], hyp[nh*j+numpy.arange(nh)], x[:,[j]], zj, hi-j*nh, dgj)
+      # the final derivative is a sum of multilinear terms, so if only one term
+      # depends on the hyperparameter under consideration, we can factorise it 
+      # out and compute the sum with one degree less
+      rth = numpy.concatenate((numpy.arange(j), numpy.arange(j+1,D)), axis=0)
+      E = __elsympol(Kd[:,:, rth], max(R)-1)       # R-1th elementary sym polyn
+      K = 0
+      for ii in range(nr):                                   # sf2 weighted sum
+        K = K + sf2[ii]*E[:,:,R[ii]-1]
+      K = dKj*K
+    elif hi < D*nh+nr:
+      EE = __elsympol(Kd, max(R))        # Rth elementary symmetric polynomials
+      j = hi-D*nh
+      K = 2*sf2[j]*EE[:,:,R[j]]                  # rest of the sf2 weighted sum
+    else:
+      raise AttributeError('Unknown hyperparameter')
+
+  return K
+
+
+def __Kdim(covf, hyp, x, z=None, dg=None):
+  """
+  Evaluate dimensionwise covariances K.
+  """
+  n, D = numpy.shape(x)                                        # dimensionality
+  nh = eval(feval(covf))           # number of hypers per individual covariance
+  
+  if z is None:                                           # make sure, z exists
+    z = numpy.array([[]])
+
+  if dg is None:
+    dg = False
+
+  xeqz = numpy.size(z) == 0                                    # determine mode
+  
+  if dg:                                                      # allocate memory
+    K = numpy.zeros((n,1,D))
+  else:
+    if xeqz:
+      K = numpy.zeros((n,n,D))
+    else:
+      K = numpy.zeros((n,numpy.size(z,0),D))
+
+  for d in range(D):
+    hyp_d = hyp[nh*d+numpy.arange(nh)]           # hyperparamter of dimension d
+    if dg:
+      K[:,:,d] = feval(covf, hyp_d, x[:,[d]], None, dg=True)
+    else:
+      if xeqz:
+        K[:,:,d] = feval(covf, hyp_d, x[:,[d]])
+      else:
+        K[:,:,d] = feval(covf, hyp_d, x[:,[d]], z[:,[d]])
+
+  return K
+
+
+def __elsympol(Z,R):
+  """
+  Evaluate the order R elementary symmetric polynomial Newton's identity aka
+  the Newton-Girard formulae: http://en.wikipedia.org/wiki/Newton's_identities
+  """
+  # evaluate 'power sums' of the individual terms in Z
+  sz = numpy.shape(Z)
+  P = numpy.zeros((sz[0], sz[1], R))
+  for r in range(R):
+    P[:,:,r] = numpy.sum(Z**(r+1),2)
+  E = numpy.zeros((sz[0],sz[1],R+1))           # E(:,:,r+1) yields polynomial r
+  E[:,:,0] = numpy.ones((sz[0],sz[1]))                         # init recursion
+  if R == 0:
+    return E
+  E[:,:,1] = P[:,:,0]                                          # init recursion
+  if R == 1:
+    return E
+  for r in range(1,R):
+    for i in range(r):
+      E[:,:,r+1] = E[:,:,r+1] + P[:,:,i]*E[:,:,r+1-i]*(-1)**i/r
+
+  return E
 
 
 def mask(covf, hyp=None, x=None, z=None, hi=None, dg=None):
@@ -1158,7 +1293,7 @@ def feval(fun, hyp=None, x=None, z=None, hi=None, dg=None, d=None, nargout=None)
       if len(fun) < 3:
         raise AttributeError('FITC covariance function must contain pseudo inputs.')
       return f(fun[1], fun[2], hyp, x, z, hi, dg, nargout)
-    elif f == cov.poly or f == cov.maternIso:
+    elif f == poly or f == maternIso or f == ppIso:
       return f(d, hyp, x, z, hi, dg)
     else:
       return f(hyp, x, z, hi, dg)
