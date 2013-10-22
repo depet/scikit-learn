@@ -40,6 +40,7 @@ def configuration(parent_package='', top_path=None):
     config.add_subpackage('mixture/tests')
     config.add_subpackage('gaussian_process')
     config.add_subpackage('gaussian_process/tests')
+    config.add_subpackage('gpml')
     config.add_subpackage('neighbors')
     config.add_subpackage('neural_network')
     config.add_subpackage('preprocessing')
